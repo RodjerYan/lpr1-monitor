@@ -1,38 +1,29 @@
 import asyncio
 import logging
+import os as _os
 import sys
 
 import httpx
 from bs4 import BeautifulSoup
 
-import os as _os
-
-from config import TARGET_CHANNEL, KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, SCREENSHOT_ENABLED
+from config import TARGET_CHANNELS, KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, NTFY_TOPIC, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
 from vk_client import send_vk
 from yandex_client import send_email
+from ntfy_client import send_ntfy
 from screenshot import take_screenshot
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    stream=sys.stdout,
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
-CHANNEL_USERNAME = TARGET_CHANNEL.lstrip("@")
-WEB_URL = f"https://t.me/s/{CHANNEL_USERNAME}"
-
-seen_ids = set()
+seen_ids: dict[str, set] = {}
 
 
 def extract_text(msg_div: BeautifulSoup) -> str | None:
     for cls in ("tgme_widget_message_text", "tgme_widget_message_caption"):
         el = msg_div.find("div", class_=cls)
-        if el:
-            text = el.get_text(strip=True)
-            if text:
-                return text
+        if el and (text := el.get_text(strip=True)):
+            return text
     return None
 
 
@@ -44,33 +35,35 @@ def build_body(text: str, msg_url: str) -> str:
     return f"{text}\n\n🔗 {msg_url}"
 
 
-async def fetch_new_messages():
+async def fetch_channel(channel: str):
+    username = channel.lstrip("@")
+    url = f"https://t.me/s/{username}"
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(WEB_URL, headers={
+            resp = await client.get(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             })
             resp.raise_for_status()
     except Exception as e:
-        logger.warning(f"Ошибка загрузки {WEB_URL}: {e}")
+        logger.warning(f"Ошибка загрузки {url}: {e}")
         return
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    messages = soup.find_all("div", class_="tgme_widget_message_wrap")
 
-    for msg_wrap in messages:
+    for msg_wrap in soup.find_all("div", class_="tgme_widget_message_wrap"):
         msg_div = msg_wrap.find("div", class_="tgme_widget_message")
         if not msg_div:
             continue
 
-        msg_id_attr = msg_div.get("data-post", "")
-        if not msg_id_attr:
+        msg_id = msg_div.get("data-post", "")
+        if not msg_id:
             continue
 
-        if msg_id_attr in seen_ids:
+        if msg_id in seen_ids.setdefault(channel, set()):
             continue
 
-        seen_ids.add(msg_id_attr)
+        seen_ids[channel].add(msg_id)
 
         text = extract_text(msg_div)
         if not text:
@@ -80,11 +73,11 @@ async def fetch_new_messages():
         if not matched_kw:
             continue
 
-        logger.info(f"[{msg_id_attr}] Найдено «{matched_kw}»: {text[:60]}...")
+        logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:60]}...")
 
-        msg_url = build_message_url(msg_id_attr)
+        msg_url = build_message_url(msg_id)
         body = build_body(text, msg_url)
-        subject = f"🔔 {TARGET_CHANNEL} — {matched_kw}"
+        subject = f"🔔 {channel} — {matched_kw}"
 
         screenshot_path = None
         if SCREENSHOT_ENABLED:
@@ -97,29 +90,34 @@ async def fetch_new_messages():
 
         if TELEGRAM_CHAT_ID:
             await asyncio.to_thread(send_telegram, body)
-
         if VK_TOKEN and VK_USER_ID:
             await asyncio.to_thread(send_vk, body)
+        if NTFY_TOPIC:
+            await asyncio.to_thread(send_ntfy, body, title=subject)
 
 
 async def main():
+    for ch in TARGET_CHANNELS:
+        seen_ids[ch] = set()
+
     if not TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN:
-        logger.info("TELEGRAM_CHAT_ID не задан. Пытаюсь получить через getUpdates...")
         cid = await asyncio.to_thread(fetch_latest_chat_id)
         if cid:
-            logger.info(f"Найден TELEGRAM_CHAT_ID: {cid}. Добавьте его в .env для постоянной работы.")
+            logger.info(f"TELEGRAM_CHAT_ID: {cid}")
         else:
-            logger.warning("Напишите @Rodjer_bel_bot любое сообщение и перезапустите бота.")
+            logger.warning("Напишите @Rodjer_bel_bot любое сообщение.")
 
-    logger.info(f"Слушаю {WEB_URL}, ищу {KEYWORDS}, интервал {POLL_INTERVAL}с")
+    logger.info(f"Каналы: {TARGET_CHANNELS}, ищу {KEYWORDS}, интервал {POLL_INTERVAL}с")
 
-    await fetch_new_messages()
-    count = len(seen_ids)
-    logger.info(f"Загружено {count} существующих сообщений, слежу за новыми...")
+    for ch in TARGET_CHANNELS:
+        await fetch_channel(ch)
+    total = sum(len(v) for v in seen_ids.values())
+    logger.info(f"Загружено {total} сообщений, слежу за новыми...")
 
     while True:
         await asyncio.sleep(POLL_INTERVAL)
-        await fetch_new_messages()
+        for ch in TARGET_CHANNELS:
+            await fetch_channel(ch)
 
 
 if __name__ == "__main__":

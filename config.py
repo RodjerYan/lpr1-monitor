@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TARGET_CHANNEL = os.getenv("TARGET_CHANNEL", "@lpr1_treugolnik")
+TARGET_CHANNELS = [c.strip() for c in os.getenv("TARGET_CHANNELS", "@lpr1_treugolnik").split(",")]
 KEYWORDS = [kw.strip() for kw in os.getenv("FILTER_KEYWORDS", "Белгород").split(",")]
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
 
@@ -12,7 +12,7 @@ YANDEX_EMAIL = os.getenv("YANDEX_EMAIL")
 YANDEX_EMAIL_PASSWORD = os.getenv("YANDEX_EMAIL_PASSWORD")
 NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL")
 
-# Telegram bot
+# Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -20,5 +20,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 VK_TOKEN = os.getenv("VK_TOKEN")
 VK_USER_ID = os.getenv("VK_USER_ID")
 
-# Screenshot (требуется Playwright)
+# ntfy.sh push
+NTFY_TOPIC = os.getenv("NTFY_TOPIC")
+
+# Screenshot
 SCREENSHOT_ENABLED = os.getenv("SCREENSHOT_ENABLED", "").lower() in ("1", "true", "yes")
