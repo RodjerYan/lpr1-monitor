@@ -1,25 +1,26 @@
-# Инструкция
+# Lpr1 Monitor Bot
 
-Бот проверяет `t.me/s/lpr1_treugolnik` каждые 30с и шлёт email при слове «Белгород».
+Бот мониторит канал @lpr1_treugolnik и шлёт email при слове «Белгород».
 
-## Настройка
+## Развернуто на Railway
 
-**1. Пароль приложения для Yandex.Pочты**
-- Зайдите на https://id.yandex.ru/security → **Пароли приложений**
-- Создать пароль → тип **Почта** → дайте имя (например `MonitorBot`)
-- Скопируйте пароль (формата `xxxxxxx-xxxxxxx`)
+Бот запущен и работает 24/7 на Railway.app.
+Проект: https://railway.com/project/62530149-0874-4d6b-b1a0-2a9272473d5e
 
-**2. Заполните `.env`**
-```
-YANDEX_EMAIL=ваш-логин@yandex.ru
-YANDEX_EMAIL_PASSWORD=скопированный-пароль
-NOTIFY_EMAIL=ваш-логин@yandex.ru   (можно тот же)
-```
+## Переменные окружения (уже заданы в Railway)
 
-**3. Запуск**
+- `YANDEX_EMAIL` = sani415@yandex.ru
+- `YANDEX_EMAIL_PASSWORD` = пароль приложения
+- `NOTIFY_EMAIL` = sani415@yandex.ru
+- `TARGET_CHANNEL` = @lpr1_treugolnik
+- `FILTER_KEYWORD` = Белгород
+- `POLL_INTERVAL` = 30
+
+## Для локального запуска
+
 ```
 pip install -r requirements.txt
+cp .env.example .env
+# заполнить .env
 python bot.py
 ```
-
-Письма приходят на почту. Yandex Messenger показывает уведомления о входящих письмах — вы увидите их там.

@@ -3,3 +3,5 @@ bot.log
 *.session
 __pycache__/
 *.pyc
+.railway/
+
