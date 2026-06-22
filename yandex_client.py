@@ -16,6 +16,9 @@ def send_email(subject: str, body: str) -> bool:
     msg["From"] = YANDEX_EMAIL
     msg["To"] = NOTIFY_EMAIL
     msg["Subject"] = subject
+    msg["X-Priority"] = "1"
+    msg["X-MSMail-Priority"] = "High"
+    msg["Importance"] = "High"
     msg.set_content(body)
 
     try:
