@@ -24,7 +24,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # VK
 VK_TOKEN = os.getenv("VK_TOKEN")
-VK_USER_ID = os.getenv("VK_USER_ID")
+VK_USER_IDS = [uid.strip() for uid in os.getenv("VK_USER_IDS", "").split(",") if uid.strip()]
 
 # ntfy.sh
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
