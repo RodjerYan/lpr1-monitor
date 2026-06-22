@@ -12,8 +12,6 @@ _members_cache = None
 
 def _get_members() -> list[str]:
     global _members_cache
-    if _members_cache is not None:
-        return _members_cache
 
     members = []
     offset = 0
@@ -29,6 +27,9 @@ def _get_members() -> list[str]:
         try:
             resp = httpx.get(url, params=params, timeout=10)
             data = resp.json()
+            if "error" in data:
+                logger.error(f"VK getMembers API error: {data['error']}")
+                break
             items = data.get("response", {}).get("items", [])
             members.extend(str(i) for i in items)
             if len(items) < 1000:
@@ -38,7 +39,8 @@ def _get_members() -> list[str]:
             logger.error(f"VK getMembers error: {e}")
             break
 
-    _members_cache = members
+    cache = members if members else None
+    _members_cache = cache
     logger.info(f"VK: получено {len(members)} подписчиков")
     return members
 
@@ -137,7 +139,7 @@ def send_vk(text: str) -> bool:
         batch = members[i : i + 100]
         params = {
             "access_token": VK_TOKEN,
-            "user_ids": ",".join(batch),
+            "peer_ids": ",".join(batch),
             "message": text,
             "random_id": 0,
             "v": "5.199",
