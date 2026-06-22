@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 import os as _os
 
-from config import TARGET_CHANNEL, KEYWORDS, POLL_INTERVAL, TELEGRAM_CHAT_ID, SCREENSHOT_ENABLED
+from config import TARGET_CHANNEL, KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
 from yandex_client import send_email
 from screenshot import take_screenshot
