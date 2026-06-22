@@ -5,6 +5,7 @@ load_dotenv()
 
 TARGET_CHANNELS = [c.strip() for c in os.getenv("TARGET_CHANNELS", "@lpr1_treugolnik").split(",")]
 KEYWORDS = [kw.strip() for kw in os.getenv("FILTER_KEYWORDS", "Белгород").split(",")]
+LOCATION_WHITELIST = [loc.strip() for loc in os.getenv("LOCATION_WHITELIST", "").split(",") if loc.strip()]
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
 
 # Email

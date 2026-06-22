@@ -11,11 +11,13 @@ def send_ntfy(text: str, title: str = "Lpr1 Monitor") -> bool:
     if not NTFY_TOPIC:
         return False
 
+    clean_title = title.encode("ascii", errors="replace").decode("ascii")
+
     try:
         resp = httpx.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
             content=text.encode("utf-8"),
-            headers={"Title": title, "Tags": "bell", "Priority": "high"},
+            headers={"Title": clean_title, "Tags": "bell", "Priority": "high"},
             timeout=10,
         )
         if resp.status_code == 200:

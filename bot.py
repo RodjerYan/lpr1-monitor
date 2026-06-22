@@ -6,7 +6,7 @@ import sys
 import httpx
 from bs4 import BeautifulSoup
 
-from config import TARGET_CHANNELS, KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, NTFY_TOPIC, SCREENSHOT_ENABLED
+from config import TARGET_CHANNELS, KEYWORDS, LOCATION_WHITELIST, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, NTFY_TOPIC, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
 from vk_client import send_vk
 from yandex_client import send_email
