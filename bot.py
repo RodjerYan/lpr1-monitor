@@ -6,7 +6,7 @@ import sys
 import httpx
 from bs4 import BeautifulSoup
 
-from config import TARGET_CHANNELS, KEYWORDS, LOCATION_WHITELIST, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, NTFY_TOPIC, SCREENSHOT_ENABLED
+from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, NTFY_TOPIC, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
 from vk_client import send_vk
 from yandex_client import send_email
@@ -35,7 +35,7 @@ def build_body(text: str, msg_url: str) -> str:
     return f"{text}\n\n🔗 {msg_url}"
 
 
-async def fetch_channel(channel: str):
+async def fetch_channel(channel: str, keywords: list[str]):
     username = channel.lstrip("@")
     url = f"https://t.me/s/{username}"
 
@@ -69,7 +69,7 @@ async def fetch_channel(channel: str):
         if not text:
             continue
 
-        matched_kw = next((kw for kw in KEYWORDS if kw.lower() in text.lower()), None)
+        matched_kw = next((kw for kw in keywords if kw.lower() in text.lower()), None)
         if not matched_kw:
             continue
 
@@ -97,7 +97,7 @@ async def fetch_channel(channel: str):
 
 
 async def main():
-    for ch in TARGET_CHANNELS:
+    for ch in CHANNEL_KEYWORDS:
         seen_ids[ch] = set()
 
     if not TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN:
@@ -107,17 +107,18 @@ async def main():
         else:
             logger.warning("Напишите @Rodjer_bel_bot любое сообщение.")
 
-    logger.info(f"Каналы: {TARGET_CHANNELS}, ищу {KEYWORDS}, интервал {POLL_INTERVAL}с")
+    channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
+    logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
 
-    for ch in TARGET_CHANNELS:
-        await fetch_channel(ch)
+    for ch, kws in CHANNEL_KEYWORDS.items():
+        await fetch_channel(ch, kws)
     total = sum(len(v) for v in seen_ids.values())
     logger.info(f"Загружено {total} сообщений, слежу за новыми...")
 
     while True:
         await asyncio.sleep(POLL_INTERVAL)
-        for ch in TARGET_CHANNELS:
-            await fetch_channel(ch)
+        for ch, kws in CHANNEL_KEYWORDS.items():
+            await fetch_channel(ch, kws)
 
 
 if __name__ == "__main__":
