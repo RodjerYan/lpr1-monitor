@@ -16,5 +16,9 @@ NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# VK
+VK_TOKEN = os.getenv("VK_TOKEN")
+VK_USER_ID = os.getenv("VK_USER_ID")
+
 # Screenshot (требуется Playwright)
 SCREENSHOT_ENABLED = os.getenv("SCREENSHOT_ENABLED", "").lower() in ("1", "true", "yes")

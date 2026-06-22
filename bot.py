@@ -7,8 +7,9 @@ from bs4 import BeautifulSoup
 
 import os as _os
 
-from config import TARGET_CHANNEL, KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SCREENSHOT_ENABLED
+from config import TARGET_CHANNEL, KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_ID, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
+from vk_client import send_vk
 from yandex_client import send_email
 from screenshot import take_screenshot
 
@@ -96,6 +97,9 @@ async def fetch_new_messages():
 
         if TELEGRAM_CHAT_ID:
             await asyncio.to_thread(send_telegram, body)
+
+        if VK_TOKEN and VK_USER_ID:
+            await asyncio.to_thread(send_vk, body)
 
 
 async def main():
