@@ -43,6 +43,57 @@ def _get_members() -> list[str]:
     return members
 
 
+GUIDE_POST_ID = None
+
+
+def pin_guide_post() -> bool:
+    global GUIDE_POST_ID
+    if not VK_TOKEN or GUIDE_POST_ID:
+        return False
+
+    text = (
+        "📢 Для получения экстренных оповещений в ЛС:\n"
+        "Напишите любое сообщение в это сообщество — после этого бот "
+        "сможет присылать вам уведомления напрямую в личные сообщения."
+    )
+
+    url = "https://api.vk.com/method/wall.post"
+    params = {
+        "access_token": VK_TOKEN,
+        "owner_id": VK_GROUP_ID,
+        "from_group": 1,
+        "message": text,
+        "close_comments": 1,
+        "v": "5.199",
+    }
+
+    try:
+        resp = httpx.get(url, params=params, timeout=10)
+        data = resp.json()
+        post_id = data.get("response", {}).get("post_id")
+        if post_id:
+            pin_params = {
+                "access_token": VK_TOKEN,
+                "owner_id": VK_GROUP_ID,
+                "post_id": post_id,
+                "v": "5.199",
+            }
+            pin_resp = httpx.get("https://api.vk.com/method/wall.pin", params=pin_params, timeout=10)
+            pin_data = pin_resp.json()
+            if pin_data.get("response"):
+                GUIDE_POST_ID = post_id
+                logger.info("VK: информационный пост закреплён")
+                return True
+            else:
+                logger.warning(f"VK wall.pin error: {pin_data}")
+        else:
+            logger.warning(f"VK wall.post guide error: {data}")
+    except Exception as e:
+        logger.error(f"VK pin guide post error: {e}")
+
+    return False
+
+
 def post_to_wall(text: str) -> bool:
     if not VK_TOKEN:
         return False

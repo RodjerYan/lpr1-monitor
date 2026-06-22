@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
-from vk_client import send_vk, post_to_wall
+from vk_client import send_vk, post_to_wall, pin_guide_post
 from yandex_client import send_email
 from ntfy_client import send_ntfy
 from screenshot import take_screenshot
@@ -107,6 +107,9 @@ async def main():
             logger.info(f"TELEGRAM_CHAT_ID: {cid}")
         else:
             logger.warning("Напишите @Rodjer_bel_bot любое сообщение.")
+
+    if VK_TOKEN:
+        await asyncio.to_thread(pin_guide_post)
 
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
