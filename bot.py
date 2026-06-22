@@ -5,7 +5,7 @@ import sys
 import httpx
 from bs4 import BeautifulSoup
 
-from config import TARGET_CHANNEL, KEYWORD, POLL_INTERVAL
+from config import TARGET_CHANNEL, KEYWORDS, POLL_INTERVAL
 from yandex_client import send_email
 
 logging.basicConfig(
@@ -57,19 +57,20 @@ async def fetch_new_messages():
 
         seen_ids.add(msg_id_attr)
 
-        if KEYWORD.lower() not in text.lower():
+        matched_kw = next((kw for kw in KEYWORDS if kw.lower() in text.lower()), None)
+        if not matched_kw:
             continue
 
-        logger.info(f"[{msg_id_attr}] Найдено: {text[:60]}...")
+        logger.info(f"[{msg_id_attr}] Найдено «{matched_kw}»: {text[:60]}...")
         await asyncio.to_thread(
             send_email,
-            subject=f"🔔 {TARGET_CHANNEL} — {KEYWORD}",
+            subject=f"🔔 {TARGET_CHANNEL} — {matched_kw}",
             body=text,
         )
 
 
 async def main():
-    logger.info(f"Слушаю {WEB_URL}, ищу «{KEYWORD}», интервал {POLL_INTERVAL}с")
+    logger.info(f"Слушаю {WEB_URL}, ищу {KEYWORDS}, интервал {POLL_INTERVAL}с")
 
     # При старте загружаем уже существующие сообщения, чтобы не спамить
     await fetch_new_messages()
