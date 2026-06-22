@@ -6,7 +6,7 @@ import sys
 import httpx
 from bs4 import BeautifulSoup
 
-from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, VK_USER_IDS, NTFY_TOPIC, SCREENSHOT_ENABLED
+from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC, SCREENSHOT_ENABLED
 from telegram_client import send_telegram, fetch_latest_chat_id
 from vk_client import send_vk, post_to_wall
 from yandex_client import send_email
@@ -92,7 +92,6 @@ async def fetch_channel(channel: str, keywords: list[str]):
             await asyncio.to_thread(send_telegram, body)
         if VK_TOKEN:
             await asyncio.to_thread(post_to_wall, body)
-        if VK_TOKEN and VK_USER_IDS:
             await asyncio.to_thread(send_vk, body)
         if NTFY_TOPIC:
             await asyncio.to_thread(send_ntfy, body, title=subject)
