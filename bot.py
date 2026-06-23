@@ -106,18 +106,12 @@ async def fetch_channel(channel: str, keywords: list[str]):
         return
 
     results = parse_messages(html, channel, keywords)
-    fresh = bool(results)
 
-    if not fresh:
-        for attempt in range(2):
-            await asyncio.sleep(1)
-            html = await fetch_page_text(url)
-            if html is None:
-                continue
+    if not results:
+        await asyncio.sleep(0.5)
+        html = await fetch_page_text(url)
+        if html:
             results = parse_messages(html, channel, keywords)
-            if results:
-                fresh = True
-                break
 
     for msg_id, matched_kw, text, msg_url in results:
         logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:60]}...")
@@ -165,8 +159,12 @@ async def main():
     logger.info(f"Загружено {total} сообщений, слежу за новыми...")
 
     while True:
-        await asyncio.sleep(POLL_INTERVAL)
+        t0 = time.time()
         await asyncio.gather(*(fetch_channel(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()))
+        elapsed = time.time() - t0
+        remaining = POLL_INTERVAL - elapsed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 if __name__ == "__main__":
