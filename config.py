@@ -28,5 +28,12 @@ VK_TOKEN = os.getenv("VK_TOKEN")
 # ntfy.sh
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
 
+# Exclude keywords per channel (messages containing these are skipped)
+raw_ex = os.getenv("CHANNEL_EXCLUDE_KEYWORDS", "{}")
+CHANNEL_EXCLUDE_KEYWORDS: dict[str, list[str]] = {
+    ch: [kw.strip().lower() for kw in kws.split(",")]
+    for ch, kws in json.loads(raw_ex).items()
+}
+
 # Screenshot
 SCREENSHOT_ENABLED = os.getenv("SCREENSHOT_ENABLED", "").lower() in ("1", "true", "yes")

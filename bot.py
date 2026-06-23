@@ -6,7 +6,7 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC
+from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC
 from telegram_client import send_telegram, fetch_latest_chat_id
 from vk_client import send_vk, post_to_wall
 from ntfy_client import send_ntfy
@@ -69,6 +69,8 @@ async def fetch_page_text(url: str) -> str | None:
 def parse_messages(html: str, channel: str, keywords: list[str]):
     soup = BeautifulSoup(html, "html.parser")
     results = []
+    exclude = CHANNEL_EXCLUDE_KEYWORDS.get(channel, [])
+    match_all = "*" in keywords
 
     for msg_wrap in soup.find_all("div", class_="tgme_widget_message_wrap"):
         msg_div = msg_wrap.find("div", class_="tgme_widget_message")
@@ -86,9 +88,16 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
         if not text:
             continue
 
-        matched_kw = next((kw for kw in keywords if kw.lower() in text.lower()), None)
-        if not matched_kw:
+        text_lower = text.lower()
+        if any(ex in text_lower for ex in exclude):
             continue
+
+        if match_all:
+            matched_kw = "*"
+        else:
+            matched_kw = next((kw for kw in keywords if kw.lower() in text_lower), None)
+            if not matched_kw:
+                continue
 
         seen_ids[channel].add(msg_id)
         msg_url = build_message_url(msg_id)
