@@ -6,10 +6,8 @@ import time
 import httpx
 from bs4 import BeautifulSoup
 
-from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC
-from telegram_client import send_telegram, fetch_latest_chat_id
+from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, POLL_INTERVAL, VK_TOKEN
 from vk_client import send_vk, post_to_wall
-from ntfy_client import send_ntfy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
 logger = logging.getLogger(__name__)
@@ -132,18 +130,10 @@ async def fetch_channel(channel: str, keywords: list[str]):
         logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:60]}...")
 
         body = build_body(text, msg_url)
-        subject = f"🔔 {channel} — {matched_kw}"
 
-        tasks = []
-        if TELEGRAM_CHAT_ID:
-            tasks.append(asyncio.to_thread(send_telegram, body))
         if VK_TOKEN:
-            tasks.append(asyncio.to_thread(post_to_wall, body))
-            tasks.append(asyncio.to_thread(send_vk, body))
-        if NTFY_TOPIC:
-            tasks.append(asyncio.to_thread(send_ntfy, body, title=subject))
-
-        await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.to_thread(post_to_wall, body)
+            await asyncio.to_thread(send_vk, body)
 
 
 async def _run_all():
@@ -158,13 +148,6 @@ async def _run_all():
 async def main():
     for ch in CHANNEL_KEYWORDS:
         seen_ids[ch] = set()
-
-    if not TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN:
-        cid = await asyncio.to_thread(fetch_latest_chat_id)
-        if cid:
-            logger.info(f"TELEGRAM_CHAT_ID: {cid}")
-        else:
-            logger.warning("Напишите @Rodjer_bel_bot любое сообщение.")
 
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
