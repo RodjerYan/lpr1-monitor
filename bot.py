@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os as _os
 import sys
+import time
 
 import httpx
 from bs4 import BeautifulSoup
@@ -17,6 +18,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 seen_ids: dict[str, set] = {}
+
+_user_agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+]
 
 
 def extract_text(msg_div: BeautifulSoup) -> str | None:
@@ -35,21 +43,31 @@ def build_body(text: str, msg_url: str) -> str:
     return f"{text}\n\n🔗 {msg_url}"
 
 
-async def fetch_channel(channel: str, keywords: list[str]):
-    username = channel.lstrip("@")
-    url = f"https://t.me/s/{username}"
+async def fetch_page_text(url: str) -> str | None:
+    ts = int(time.time() * 1000)
+    cache_busted = f"{url}?_={ts}"
+    ua = _user_agents[ts % len(_user_agents)]
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            })
+            resp = await client.get(
+                cache_busted,
+                headers={
+                    "User-Agent": ua,
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                },
+            )
             resp.raise_for_status()
+            return resp.text
     except Exception as e:
         logger.warning(f"Ошибка загрузки {url}: {e}")
-        return
+        return None
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+
+def parse_messages(html: str, channel: str, keywords: list[str]):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
 
     for msg_wrap in soup.find_all("div", class_="tgme_widget_message_wrap"):
         msg_div = msg_wrap.find("div", class_="tgme_widget_message")
@@ -73,9 +91,37 @@ async def fetch_channel(channel: str, keywords: list[str]):
         if not matched_kw:
             continue
 
+        msg_url = build_message_url(msg_id)
+        results.append((msg_id, matched_kw, text, msg_url))
+
+    return results
+
+
+async def fetch_channel(channel: str, keywords: list[str]):
+    username = channel.lstrip("@")
+    url = f"https://t.me/s/{username}"
+
+    html = await fetch_page_text(url)
+    if html is None:
+        return
+
+    results = parse_messages(html, channel, keywords)
+    fresh = bool(results)
+
+    if not fresh:
+        for attempt in range(2):
+            await asyncio.sleep(1)
+            html = await fetch_page_text(url)
+            if html is None:
+                continue
+            results = parse_messages(html, channel, keywords)
+            if results:
+                fresh = True
+                break
+
+    for msg_id, matched_kw, text, msg_url in results:
         logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:60]}...")
 
-        msg_url = build_message_url(msg_id)
         body = build_body(text, msg_url)
         subject = f"🔔 {channel} — {matched_kw}"
 
@@ -111,15 +157,16 @@ async def main():
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
 
-    for ch, kws in CHANNEL_KEYWORDS.items():
+    async def init_ch(ch, kws):
         await fetch_channel(ch, kws)
+
+    await asyncio.gather(*(init_ch(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()))
     total = sum(len(v) for v in seen_ids.values())
     logger.info(f"Загружено {total} сообщений, слежу за новыми...")
 
     while True:
         await asyncio.sleep(POLL_INTERVAL)
-        for ch, kws in CHANNEL_KEYWORDS.items():
-            await fetch_channel(ch, kws)
+        await asyncio.gather(*(fetch_channel(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()))
 
 
 if __name__ == "__main__":

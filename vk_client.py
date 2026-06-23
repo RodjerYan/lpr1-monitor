@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 
@@ -8,10 +9,16 @@ logger = logging.getLogger(__name__)
 
 VK_GROUP_ID = -239766241
 _members_cache = None
+_members_cache_ts = 0
+MEMBERS_CACHE_TTL = 300
 
 
 def _get_members() -> list[str]:
-    global _members_cache
+    global _members_cache, _members_cache_ts
+
+    now = time.time()
+    if _members_cache is not None and now - _members_cache_ts < MEMBERS_CACHE_TTL:
+        return _members_cache
 
     members = []
     offset = 0
@@ -41,6 +48,7 @@ def _get_members() -> list[str]:
 
     cache = members if members else None
     _members_cache = cache
+    _members_cache_ts = now
     logger.info(f"VK: получено {len(members)} подписчиков")
     return members
 

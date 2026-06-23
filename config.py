@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
+POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
 
 # Пара "канал -> список ключевых слов"
 raw = os.getenv("CHANNEL_KEYWORDS", "{}")
