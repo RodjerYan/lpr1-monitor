@@ -50,7 +50,7 @@ async def fetch_page_text(url: str) -> str | None:
     ua = _user_agents[ts % len(_user_agents)]
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=8) as client:
             resp = await client.get(
                 cache_busted,
                 headers={
@@ -61,6 +61,9 @@ async def fetch_page_text(url: str) -> str | None:
             )
             resp.raise_for_status()
             return resp.text
+    except asyncio.TimeoutError:
+        logger.warning(f"Таймаут {url}")
+        return None
     except Exception as e:
         logger.warning(f"Ошибка загрузки {url}: {e}")
         return None
@@ -131,18 +134,29 @@ async def fetch_channel(channel: str, keywords: list[str]):
         if SCREENSHOT_ENABLED:
             screenshot_path = await asyncio.to_thread(take_screenshot, msg_url)
 
-        await asyncio.to_thread(send_email, subject=subject, body=body, screenshot_path=screenshot_path)
+        tasks = []
+        tasks.append(asyncio.to_thread(send_email, subject=subject, body=body, screenshot_path=screenshot_path))
+        if TELEGRAM_CHAT_ID:
+            tasks.append(asyncio.to_thread(send_telegram, body))
+        if VK_TOKEN:
+            tasks.append(asyncio.to_thread(post_to_wall, body))
+            tasks.append(asyncio.to_thread(send_vk, body))
+        if NTFY_TOPIC:
+            tasks.append(asyncio.to_thread(send_ntfy, body, title=subject))
+
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         if screenshot_path:
             _os.unlink(screenshot_path)
 
-        if TELEGRAM_CHAT_ID:
-            await asyncio.to_thread(send_telegram, body)
-        if VK_TOKEN:
-            await asyncio.to_thread(post_to_wall, body)
-            await asyncio.to_thread(send_vk, body)
-        if NTFY_TOPIC:
-            await asyncio.to_thread(send_ntfy, body, title=subject)
+
+async def _run_all():
+    tasks = [fetch_channel(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()]
+    done, _ = await asyncio.wait(tasks, timeout=10)
+    for t in tasks:
+        if t not in done and not t.done():
+            t.cancel()
+    return
 
 
 async def main():
@@ -159,16 +173,13 @@ async def main():
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
 
-    async def init_ch(ch, kws):
-        await fetch_channel(ch, kws)
-
-    await asyncio.gather(*(init_ch(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()))
+    await _run_all()
     total = sum(len(v) for v in seen_ids.values())
     logger.info(f"Загружено {total} сообщений, слежу за новыми...")
 
     while True:
         t0 = time.time()
-        await asyncio.gather(*(fetch_channel(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()))
+        await _run_all()
         elapsed = time.time() - t0
         remaining = POLL_INTERVAL - elapsed
         if remaining > 0:
