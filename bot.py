@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os as _os
 import sys
@@ -17,7 +18,27 @@ from screenshot import take_screenshot
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
+SEEN_FILE = "seen_ids.json"
 seen_ids: dict[str, set] = {}
+
+
+def _save_seen():
+    data = {ch: list(ids) for ch, ids in seen_ids.items()}
+    with open(SEEN_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def _load_seen():
+    if not _os.path.exists(SEEN_FILE):
+        return
+    try:
+        with open(SEEN_FILE) as f:
+            data = json.load(f)
+        for ch, ids in data.items():
+            seen_ids[ch] = set(ids)
+        logger.info(f"Загружено seen_ids для {len(data)} каналов")
+    except Exception as e:
+        logger.warning(f"Ошибка загрузки seen_ids: {e}")
 
 _user_agents = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0",
@@ -106,12 +127,14 @@ async def fetch_channel(channel: str, keywords: list[str]):
         return
 
     results = parse_messages(html, channel, keywords)
+    _save_seen()
 
     if not results:
         await asyncio.sleep(0.5)
         html = await fetch_page_text(url)
         if html:
             results = parse_messages(html, channel, keywords)
+            _save_seen()
 
     for msg_id, matched_kw, text, msg_url in results:
         logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:60]}...")
@@ -138,8 +161,10 @@ async def fetch_channel(channel: str, keywords: list[str]):
 
 
 async def main():
+    _load_seen()
     for ch in CHANNEL_KEYWORDS:
-        seen_ids[ch] = set()
+        if ch not in seen_ids:
+            seen_ids[ch] = set()
 
     if not TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN:
         cid = await asyncio.to_thread(fetch_latest_chat_id)
