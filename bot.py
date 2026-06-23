@@ -82,8 +82,6 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
         if msg_id in seen_ids.setdefault(channel, set()):
             continue
 
-        seen_ids[channel].add(msg_id)
-
         text = extract_text(msg_div)
         if not text:
             continue
@@ -92,6 +90,7 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
         if not matched_kw:
             continue
 
+        seen_ids[channel].add(msg_id)
         msg_url = build_message_url(msg_id)
         results.append((msg_id, matched_kw, text, msg_url))
 
@@ -115,10 +114,9 @@ async def fetch_channel(channel: str, keywords: list[str]):
             results = parse_messages(html, channel, keywords)
 
     if channel not in warmed_up:
-        # first fetch: just record IDs, don't send
         warmed_up.add(channel)
         if results:
-            logger.info(f"[{channel}] Прогрев: {len(results)} сообщений запомнено, отправка не будет")
+            logger.info(f"[{channel}] Прогрев: {len(results)} сообщений, отправка на следующем цикле")
         return
 
     for msg_id, matched_kw, text, msg_url in results:
