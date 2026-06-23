@@ -1,18 +1,15 @@
 import asyncio
 import logging
-import os as _os
 import sys
 import time
 
 import httpx
 from bs4 import BeautifulSoup
 
-from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC, SCREENSHOT_ENABLED
+from config import CHANNEL_KEYWORDS, POLL_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, VK_TOKEN, NTFY_TOPIC
 from telegram_client import send_telegram, fetch_latest_chat_id
 from vk_client import send_vk, post_to_wall
-from yandex_client import send_email
 from ntfy_client import send_ntfy
-from screenshot import take_screenshot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
 logger = logging.getLogger(__name__)
@@ -130,12 +127,7 @@ async def fetch_channel(channel: str, keywords: list[str]):
         body = build_body(text, msg_url)
         subject = f"🔔 {channel} — {matched_kw}"
 
-        screenshot_path = None
-        if SCREENSHOT_ENABLED:
-            screenshot_path = await asyncio.to_thread(take_screenshot, msg_url)
-
         tasks = []
-        tasks.append(asyncio.to_thread(send_email, subject=subject, body=body, screenshot_path=screenshot_path))
         if TELEGRAM_CHAT_ID:
             tasks.append(asyncio.to_thread(send_telegram, body))
         if VK_TOKEN:
@@ -145,9 +137,6 @@ async def fetch_channel(channel: str, keywords: list[str]):
             tasks.append(asyncio.to_thread(send_ntfy, body, title=subject))
 
         await asyncio.gather(*tasks, return_exceptions=True)
-
-        if screenshot_path:
-            _os.unlink(screenshot_path)
 
 
 async def _run_all():
