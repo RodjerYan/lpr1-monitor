@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import sys
+import threading
 import time
 
 import httpx
@@ -145,21 +147,44 @@ async def _run_all():
     return
 
 
+last_cycle = 0.0
+
+
+def _watchdog():
+    global last_cycle
+    while True:
+        time.sleep(60)
+        now = time.time()
+        since = now - last_cycle
+        if since > 600:
+            logger.warning(f"Health OK: {since:.0f}s since last cycle, {sum(len(v) for v in seen_ids.values())} msgs tracked")
+        if since > 300:
+            logger.error(f"No cycles for {since:.0f}s, crashing for restart")
+            os._exit(1)
+
+
 async def main():
+    global last_cycle
+
     for ch in CHANNEL_KEYWORDS:
         seen_ids[ch] = set()
+
+    t = threading.Thread(target=_watchdog, daemon=True)
+    t.start()
 
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
 
     await _run_all()
+    last_cycle = time.time()
     total = sum(len(v) for v in seen_ids.values())
     logger.info(f"Загружено {total} сообщений, слежу за новыми...")
 
     while True:
         t0 = time.time()
         await _run_all()
-        elapsed = time.time() - t0
+        last_cycle = time.time()
+        elapsed = last_cycle - t0
         remaining = POLL_INTERVAL - elapsed
         if remaining > 0:
             await asyncio.sleep(remaining)
