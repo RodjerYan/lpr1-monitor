@@ -147,7 +147,7 @@ async def fetch_channel(channel: str, keywords: list[str]):
 
 
 async def _run_all():
-    tasks = [fetch_channel(ch, kws) for ch, kws in CHANNEL_KEYWORDS.items()]
+    tasks = [asyncio.create_task(fetch_channel(ch, kws)) for ch, kws in CHANNEL_KEYWORDS.items()]
     done, _ = await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if t not in done and not t.done():
