@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -12,6 +13,7 @@ from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, POLL_INTERVAL, VK
 from vk_client import send_vk, post_to_wall
 
 _log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.log")
+_seen_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen_ids.json")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -22,8 +24,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-seen_ids: dict[str, set] = {}
-warmed_up: set[str] = set()
+seen_ids: dict[str, list[str]] = {}
+
+
+def _load_seen():
+    global seen_ids
+    if os.path.exists(_seen_file):
+        try:
+            with open(_seen_file, "r", encoding="utf-8") as f:
+                seen_ids = {ch: data for ch, data in json.load(f).items()}
+            total = sum(len(v) for v in seen_ids.values())
+            logger.info(f"Загружено {total} known IDs из seen_ids.json")
+        except Exception as e:
+            logger.warning(f"Ошибка загрузки seen_ids.json: {e}")
+            seen_ids = {}
+
+
+def _save_seen():
+    try:
+        with open(_seen_file, "w", encoding="utf-8") as f:
+            json.dump(seen_ids, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"Ошибка сохранения seen_ids.json: {e}")
+
 
 _user_agents = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0",
@@ -79,6 +102,7 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
     results = []
     exclude = CHANNEL_EXCLUDE_KEYWORDS.get(channel, [])
     match_all = "*" in keywords
+    ch_seen = set(seen_ids.setdefault(channel, []))
 
     for msg_wrap in soup.find_all("div", class_="tgme_widget_message_wrap"):
         msg_div = msg_wrap.find("div", class_="tgme_widget_message")
@@ -89,7 +113,7 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
         if not msg_id:
             continue
 
-        if msg_id in seen_ids.setdefault(channel, set()):
+        if msg_id in ch_seen:
             continue
 
         text = extract_text(msg_div)
@@ -107,10 +131,11 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
             if not matched_kw:
                 continue
 
-        seen_ids[channel].add(msg_id)
+        ch_seen.add(msg_id)
         msg_url = build_message_url(msg_id)
         results.append((msg_id, matched_kw, text, msg_url))
 
+    seen_ids[channel] = list(ch_seen)
     return results
 
 
@@ -130,13 +155,6 @@ async def fetch_channel(channel: str, keywords: list[str]):
         if html:
             results = parse_messages(html, channel, keywords)
 
-    if channel not in warmed_up:
-        warmed_up.add(channel)
-        if results:
-            logger.info(f"[{channel}] Прогрев: {len(results)} сообщений, отправка")
-        else:
-            return
-
     for msg_id, matched_kw, text, msg_url in results:
         logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:80]}...")
 
@@ -147,7 +165,7 @@ async def fetch_channel(channel: str, keywords: list[str]):
             await asyncio.to_thread(post_to_wall, body)
             await asyncio.to_thread(send_vk, body)
         else:
-            logger.warning(f"[{msg_id}] VK_TOKEN не задан, пропуск отправки")
+            logger.warning(f"[{msg_id}] VK_TOKEN не задан, пропуск")
 
 
 async def _run_all():
@@ -156,7 +174,6 @@ async def _run_all():
     for t in tasks:
         if t not in done and not t.done():
             t.cancel()
-    return
 
 
 last_cycle = 0.0
@@ -178,8 +195,11 @@ def _watchdog():
 async def main():
     global last_cycle
 
+    _load_seen()
+
     for ch in CHANNEL_KEYWORDS:
-        seen_ids[ch] = set()
+        if ch not in seen_ids:
+            seen_ids[ch] = []
 
     t = threading.Thread(target=_watchdog, daemon=True)
     t.start()
@@ -188,6 +208,7 @@ async def main():
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
 
     await _run_all()
+    _save_seen()
     last_cycle = time.time()
     total = sum(len(v) for v in seen_ids.values())
     logger.info(f"Загружено {total} сообщений, слежу за новыми...")
@@ -195,6 +216,7 @@ async def main():
     while True:
         t0 = time.time()
         await _run_all()
+        _save_seen()
         last_cycle = time.time()
         elapsed = last_cycle - t0
         remaining = POLL_INTERVAL - elapsed
