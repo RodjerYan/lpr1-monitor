@@ -71,16 +71,17 @@ def post_to_wall(text: str) -> bool:
     }
 
     try:
+        logger.info(f"VK wall.post: отправка...")
         resp = httpx.get(url, params=params, timeout=10)
         data = resp.json()
         if data.get("response"):
-            logger.info("VK: пост на стене")
+            logger.info(f"VK: пост на стене OK (post_id={data['response'].get('post_id')})")
             return True
         else:
-            logger.warning(f"VK wall.post error: {data}")
+            logger.error(f"VK wall.post ОШИБКА: {data}")
             return False
     except Exception as e:
-        logger.error(f"VK wall.post error: {e}")
+        logger.error(f"VK wall.post ИСКЛЮЧЕНИЕ: {e}")
         return False
 
 
@@ -105,14 +106,15 @@ def send_vk(text: str) -> bool:
             "v": "5.199",
         }
         try:
+            logger.info(f"VK messages.send: batch {i//100+1}, {len(batch)} recipients...")
             resp = httpx.get(url, params=params, timeout=15)
             data = resp.json()
             if data.get("response"):
-                logger.info(f"VK: лс отправлено {len(batch)} подписчикам")
+                logger.info(f"VK: ЛС отправлено {len(batch)} подписчикам OK")
                 ok = True
             else:
-                logger.warning(f"VK batch error: {data}")
+                logger.error(f"VK messages.send ОШИБКА batch {i//100+1}: {data}")
         except Exception as e:
-            logger.error(f"VK batch error: {e}")
+            logger.error(f"VK messages.send ИСКЛЮЧЕНИЕ batch {i//100+1}: {e}")
 
     return ok

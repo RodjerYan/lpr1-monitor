@@ -11,7 +11,15 @@ from bs4 import BeautifulSoup
 from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, POLL_INTERVAL, VK_TOKEN
 from vk_client import send_vk, post_to_wall
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
+_log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(_log_file, encoding="utf-8"),
+    ],
+)
 logger = logging.getLogger(__name__)
 
 seen_ids: dict[str, set] = {}
@@ -125,17 +133,21 @@ async def fetch_channel(channel: str, keywords: list[str]):
     if channel not in warmed_up:
         warmed_up.add(channel)
         if results:
-            logger.info(f"[{channel}] Прогрев: {len(results)} сообщений, отправка на следующем цикле")
-        return
+            logger.info(f"[{channel}] Прогрев: {len(results)} сообщений, отправка")
+        else:
+            return
 
     for msg_id, matched_kw, text, msg_url in results:
-        logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:60]}...")
+        logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:80]}...")
 
         body = build_body(text, msg_url)
 
         if VK_TOKEN:
+            logger.info(f"[{msg_id}] Отправка в VK...")
             await asyncio.to_thread(post_to_wall, body)
             await asyncio.to_thread(send_vk, body)
+        else:
+            logger.warning(f"[{msg_id}] VK_TOKEN не задан, пропуск отправки")
 
 
 async def _run_all():
@@ -159,8 +171,8 @@ def _watchdog():
         if since > 600:
             logger.warning(f"Health OK: {since:.0f}s since last cycle, {sum(len(v) for v in seen_ids.values())} msgs tracked")
         if since > 300:
-            logger.error(f"No cycles for {since:.0f}s, crashing for restart")
-            os._exit(1)
+            logger.error(f"No cycles for {since:.0f}s, restarting")
+            os._exit(2)
 
 
 async def main():
