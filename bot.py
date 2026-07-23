@@ -5,6 +5,8 @@ import os
 import sys
 import threading
 import time
+from http import HTTPStatus
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import httpx
 from bs4 import BeautifulSoup
@@ -192,6 +194,27 @@ def _watchdog():
             os._exit(2)
 
 
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(HTTPStatus.OK)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        self.send_response(HTTPStatus.OK)
+        self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+
+def _start_http():
+    port = int(os.getenv("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    logger.info(f"HTTP server listening on 0.0.0.0:{port}")
+    server.serve_forever()
+
+
 async def main():
     global last_cycle
 
@@ -201,8 +224,8 @@ async def main():
         if ch not in seen_ids:
             seen_ids[ch] = []
 
-    t = threading.Thread(target=_watchdog, daemon=True)
-    t.start()
+    threading.Thread(target=_watchdog, daemon=True).start()
+    threading.Thread(target=_start_http, daemon=True).start()
 
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
