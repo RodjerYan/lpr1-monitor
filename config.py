@@ -35,5 +35,12 @@ CHANNEL_EXCLUDE_KEYWORDS: dict[str, list[str]] = {
     for ch, kws in json.loads(raw_ex).items()
 }
 
+# Max message length per channel (messages longer than this are skipped)
+raw_ml = os.getenv("CHANNEL_MAX_LENGTH", "{}")
+CHANNEL_MAX_LENGTH: dict[str, int] = {
+    ch: int(v)
+    for ch, v in json.loads(raw_ml).items()
+}
+
 # Screenshot
 SCREENSHOT_ENABLED = os.getenv("SCREENSHOT_ENABLED", "").lower() in ("1", "true", "yes")

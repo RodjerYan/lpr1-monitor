@@ -11,7 +11,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import httpx
 from bs4 import BeautifulSoup
 
-from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, POLL_INTERVAL, VK_TOKEN
+from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, CHANNEL_MAX_LENGTH, POLL_INTERVAL, VK_TOKEN
 from vk_client import send_vk, post_to_wall
 
 _log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.log")
@@ -157,7 +157,13 @@ async def fetch_channel(channel: str, keywords: list[str]):
         if html:
             results = parse_messages(html, channel, keywords)
 
+    max_len = CHANNEL_MAX_LENGTH.get(channel)
+
     for msg_id, matched_kw, text, msg_url in results:
+        if max_len and len(text) > max_len:
+            logger.info(f"[{msg_id}] Пропущен ({len(text)} > {max_len} символов): {text[:80]}...")
+            continue
+
         logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:80]}...")
 
         body = build_body(text, msg_url)
