@@ -279,7 +279,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 
 def _self_ping():
-    url = os.getenv("SELF_PING_URL")
+    url = os.getenv("SELF_PING_URL") or os.getenv("RENDER_EXTERNAL_URL")
     if not url:
         port = int(os.getenv("PORT", "8080"))
         url = f"http://127.0.0.1:{port}/"
