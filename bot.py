@@ -229,13 +229,46 @@ def _watchdog():
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(HTTPStatus.OK)
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path == "/diag":
+            self._handle_diag()
+        else:
+            self.send_response(HTTPStatus.OK)
+            self.end_headers()
+            self.wfile.write(b"OK")
 
     def do_HEAD(self):
         self.send_response(HTTPStatus.OK)
         self.end_headers()
+
+    def _handle_diag(self):
+        import httpx as _httpx
+        from bs4 import BeautifulSoup as _BS
+        lines = []
+        for ch in CHANNEL_KEYWORDS:
+            username = ch.lstrip("@")
+            url = f"https://t.me/s/{username}"
+            try:
+                resp = _httpx.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0"}, timeout=10)
+                html = resp.text
+                soup = _BS(html, "html.parser")
+                wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
+                lines.append(f"{ch}: HTTP {resp.status_code} len={len(html)} wraps={len(wraps)}")
+                if wraps:
+                    msg = wraps[-1].find("div", class_="tgme_widget_message")
+                    if msg:
+                        text_el = msg.find("div", class_="tgme_widget_message_text")
+                        lines.append(f"  last: post_id={msg.get('data-post')} text={text_el.get_text(strip=True)[:80] if text_el else 'NONE'}")
+                else:
+                    tgme = sorted(set(c for d in soup.find_all("div", class_=True) for c in d.get("class", []) if "tgme" in c))
+                    lines.append(f"  NO WRAPS! tgme={tgme}")
+                    lines.append(f"  HTML[:500]={html[:500]}")
+            except Exception as e:
+                lines.append(f"{ch}: ERROR {e}")
+        body = "\n".join(lines).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *a):
         pass
