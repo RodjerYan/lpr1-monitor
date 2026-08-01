@@ -106,7 +106,15 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
     match_all = "*" in keywords
     ch_seen = set(seen_ids.setdefault(channel, []))
 
-    for msg_wrap in soup.find_all("div", class_="tgme_widget_message_wrap"):
+    wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
+    if not wraps:
+        tgme_classes = sorted(set(
+            c for d in soup.find_all("div", class_=True)
+            for c in d.get("class", []) if "tgme" in c
+        ))
+        logger.warning(f"[{channel}] NO message wraps! tgme classes: {tgme_classes}, html_len={len(html)}, preview={html[:300]}")
+
+    for msg_wrap in wraps:
         msg_div = msg_wrap.find("div", class_="tgme_widget_message")
         if not msg_div:
             continue
@@ -141,13 +149,32 @@ def parse_messages(html: str, channel: str, keywords: list[str]):
     return results
 
 
+_startup_diag_done = False
+
+
 async def fetch_channel(channel: str, keywords: list[str]):
+    global _startup_diag_done
     username = channel.lstrip("@")
     url = f"https://t.me/s/{username}"
 
     html = await fetch_page_text(url)
     if html is None:
         return
+
+    if not _startup_diag_done:
+        _startup_diag_done = True
+        soup = BeautifulSoup(html, "html.parser")
+        wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
+        all_tgme = sorted(set(
+            c for d in soup.find_all("div", class_=True)
+            for c in d.get("class", []) if "tgme" in c
+        ))
+        logger.info(f"[STARTUP DIAG] channel={channel} html_len={len(html)} wraps={len(wraps)} tgme_classes={all_tgme}")
+        if wraps:
+            msg = wraps[-1].find("div", class_="tgme_widget_message")
+            if msg:
+                text_el = msg.find("div", class_="tgme_widget_message_text")
+                logger.info(f"[STARTUP DIAG] last post_id={msg.get('data-post')} text={text_el.get_text(strip=True)[:100] if text_el else 'NONE'}")
 
     results = parse_messages(html, channel, keywords)
 
