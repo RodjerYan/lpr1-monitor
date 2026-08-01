@@ -1,0 +1,32 @@
+services:
+  - type: worker
+    name: lpr1-monitor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u bot.py
+    envVars:
+      - key: CHANNEL_KEYWORDS
+        sync: false
+      - key: CHANNEL_EXCLUDE_KEYWORDS
+        sync: false
+      - key: CHANNEL_MAX_LENGTH
+        sync: false
+      - key: POLL_INTERVAL
+        sync: false
+      - key: VK_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: NTFY_TOPIC
+        sync: false
+      - key: SCREENSHOT_ENABLED
+        sync: false
+      - key: YANDEX_EMAIL
+        sync: false
+      - key: YANDEX_EMAIL_PASSWORD
+        sync: false
+      - key: NOTIFY_EMAIL
+        sync: false

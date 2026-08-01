@@ -165,11 +165,15 @@ async def fetch_channel(channel: str, keywords: list[str]):
         _startup_diag_done = True
         soup = BeautifulSoup(html, "html.parser")
         wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
-        all_tgme = sorted(set(
+        all_div_classes = sorted(set(
             c for d in soup.find_all("div", class_=True)
-            for c in d.get("class", []) if "tgme" in c
+            for c in d.get("class", [])
         ))
-        logger.info(f"[STARTUP DIAG] channel={channel} html_len={len(html)} wraps={len(wraps)} tgme_classes={all_tgme}")
+        has_script = "script" in html.lower()
+        has_tgme = any("tgme" in c for c in all_div_classes)
+        logger.info(f"[STARTUP DIAG] channel={channel} html_len={len(html)} wraps={len(wraps)} has_script={has_script} has_tgme={has_tgme}")
+        logger.info(f"[STARTUP DIAG] all_div_classes(first 30)={all_div_classes[:30]}")
+        logger.info(f"[STARTUP DIAG] HTML[:1000]={html[:1000]}")
         if wraps:
             msg = wraps[-1].find("div", class_="tgme_widget_message")
             if msg:
@@ -274,6 +278,19 @@ class _HealthHandler(BaseHTTPRequestHandler):
         pass
 
 
+def _self_ping():
+    port = int(os.getenv("PORT", "8080"))
+    url = f"http://127.0.0.1:{port}/"
+    while True:
+        time.sleep(14 * 60)
+        try:
+            import httpx as _httpx
+            resp = _httpx.get(url, timeout=10)
+            logger.info(f"Self-ping: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Self-ping error: {e}")
+
+
 def _start_http():
     port = int(os.getenv("PORT", "8080"))
     server = HTTPServer(("0.0.0.0", port), _HealthHandler)
@@ -292,6 +309,7 @@ async def main():
 
     threading.Thread(target=_watchdog, daemon=True).start()
     threading.Thread(target=_start_http, daemon=True).start()
+    threading.Thread(target=_self_ping, daemon=True).start()
 
     channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
     logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
