@@ -279,8 +279,11 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 
 def _self_ping():
-    port = int(os.getenv("PORT", "8080"))
-    url = f"http://127.0.0.1:{port}/"
+    url = os.getenv("SELF_PING_URL")
+    if not url:
+        port = int(os.getenv("PORT", "8080"))
+        url = f"http://127.0.0.1:{port}/"
+    logger.info(f"Self-ping URL: {url}")
     while True:
         time.sleep(14 * 60)
         try:
