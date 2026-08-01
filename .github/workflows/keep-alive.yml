@@ -10,4 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Render
-        run: curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://lpr1-monitor.onrender.com/
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://lpr1-monitor-v2.onrender.com/
+          curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://lpr1-monitor-v2.onrender.com/diag
