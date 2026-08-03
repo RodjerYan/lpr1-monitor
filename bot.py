@@ -71,7 +71,7 @@ def build_message_url(msg_id: str) -> str:
 
 
 def build_body(text: str, msg_url: str) -> str:
-    return f"{text}\n\n🔗 {msg_url}"
+    return text
 
 
 async def fetch_page_text(url: str) -> str | None:
