@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import json
 import logging
@@ -8,14 +9,24 @@ import time
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-import httpx
-from bs4 import BeautifulSoup
+from telethon import TelegramClient, events, errors
+from telethon.sessions import StringSession
 
-from config import CHANNEL_KEYWORDS, CHANNEL_EXCLUDE_KEYWORDS, CHANNEL_MAX_LENGTH, POLL_INTERVAL, VK_TOKEN
+from config import (
+    CHANNEL_KEYWORDS,
+    CHANNEL_EXCLUDE_KEYWORDS,
+    CHANNEL_MAX_LENGTH,
+    VK_TOKEN,
+)
 from vk_client import send_vk, post_to_wall
 
-_log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.log")
-_seen_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen_ids.json")
+_dir = os.path.dirname(os.path.abspath(__file__))
+_log_file = os.path.join(_dir, "bot.log")
+_seen_file = os.path.join(_dir, "seen_ids.json")
+_seen_lock = threading.Lock()
+_session_name = os.path.join(_dir, "tg_monitor")
+_code_file = os.path.join(_dir, "tg_code.txt")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -27,6 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 seen_ids: dict[str, list[str]] = {}
+_initial_done = False
 
 
 def _load_seen():
@@ -50,232 +62,26 @@ def _save_seen():
         logger.warning(f"Ошибка сохранения seen_ids.json: {e}")
 
 
-_user_agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
-]
-
-
-def extract_text(msg_div: BeautifulSoup) -> str | None:
-    for cls in ("tgme_widget_message_text", "tgme_widget_message_caption"):
-        el = msg_div.find("div", class_=cls)
-        if el and (text := el.get_text(strip=True)):
-            return text
-    return None
-
-
-def build_message_url(msg_id: str) -> str:
-    return f"https://t.me/{msg_id}"
-
-
-def build_body(text: str, msg_url: str) -> str:
-    return text
-
-
-async def fetch_page_text(url: str) -> str | None:
-    ts = int(time.time() * 1000)
-    cache_busted = f"{url}?_={ts}"
-    ua = _user_agents[ts % len(_user_agents)]
-
-    try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.get(
-                cache_busted,
-                headers={
-                    "User-Agent": ua,
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                },
-            )
-            resp.raise_for_status()
-            return resp.text
-    except asyncio.TimeoutError:
-        logger.warning(f"Таймаут {url}")
-        return None
-    except Exception as e:
-        logger.warning(f"Ошибка загрузки {url}: {e}")
-        return None
-
-
-def parse_messages(html: str, channel: str, keywords: list[str]):
-    soup = BeautifulSoup(html, "html.parser")
-    results = []
-    exclude = CHANNEL_EXCLUDE_KEYWORDS.get(channel, [])
-    match_all = "*" in keywords
-    ch_seen = set(seen_ids.setdefault(channel, []))
-
-    wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
-    if not wraps:
-        tgme_classes = sorted(set(
-            c for d in soup.find_all("div", class_=True)
-            for c in d.get("class", []) if "tgme" in c
-        ))
-        logger.warning(f"[{channel}] NO message wraps! tgme classes: {tgme_classes}, html_len={len(html)}, preview={html[:300]}")
-
-    for msg_wrap in wraps:
-        msg_div = msg_wrap.find("div", class_="tgme_widget_message")
-        if not msg_div:
-            continue
-
-        msg_id = msg_div.get("data-post", "")
-        if not msg_id:
-            continue
-
-        if msg_id in ch_seen:
-            continue
-
-        text = extract_text(msg_div)
-        if not text:
-            continue
-
-        text_lower = text.lower()
-        if any(ex in text_lower for ex in exclude):
-            continue
-
-        if match_all:
-            matched_kw = "*"
-        else:
-            matched_kw = next((kw for kw in keywords if kw.lower() in text_lower), None)
-            if not matched_kw:
-                continue
-
-        ch_seen.add(msg_id)
-        msg_url = build_message_url(msg_id)
-        results.append((msg_id, matched_kw, text, msg_url))
-
-    seen_ids[channel] = list(ch_seen)
-    return results
-
-
-_startup_diag_done = False
-
-
-async def fetch_channel(channel: str, keywords: list[str]):
-    global _startup_diag_done
-    username = channel.lstrip("@")
-    url = f"https://t.me/s/{username}"
-
-    html = await fetch_page_text(url)
-    if html is None:
-        return
-
-    if not _startup_diag_done:
-        _startup_diag_done = True
-        soup = BeautifulSoup(html, "html.parser")
-        wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
-        all_div_classes = sorted(set(
-            c for d in soup.find_all("div", class_=True)
-            for c in d.get("class", [])
-        ))
-        has_script = "script" in html.lower()
-        has_tgme = any("tgme" in c for c in all_div_classes)
-        logger.info(f"[STARTUP DIAG] channel={channel} html_len={len(html)} wraps={len(wraps)} has_script={has_script} has_tgme={has_tgme}")
-        logger.info(f"[STARTUP DIAG] all_div_classes(first 30)={all_div_classes[:30]}")
-        logger.info(f"[STARTUP DIAG] HTML[:1000]={html[:1000]}")
-        if wraps:
-            msg = wraps[-1].find("div", class_="tgme_widget_message")
-            if msg:
-                text_el = msg.find("div", class_="tgme_widget_message_text")
-                logger.info(f"[STARTUP DIAG] last post_id={msg.get('data-post')} text={text_el.get_text(strip=True)[:100] if text_el else 'NONE'}")
-
-    results = parse_messages(html, channel, keywords)
-
-    if not results:
-        await asyncio.sleep(0.5)
-        html = await fetch_page_text(url)
-        if html:
-            results = parse_messages(html, channel, keywords)
-
-    max_len = CHANNEL_MAX_LENGTH.get(channel)
-
-    for msg_id, matched_kw, text, msg_url in results:
-        if max_len and len(text) > max_len:
-            logger.info(f"[{msg_id}] Пропущен ({len(text)} > {max_len} символов): {text[:80]}...")
-            continue
-
-        logger.info(f"[{msg_id}] Найдено «{matched_kw}»: {text[:80]}...")
-
-        body = build_body(text, msg_url)
-
-        if VK_TOKEN:
-            logger.info(f"[{msg_id}] Отправка в VK...")
-            await asyncio.to_thread(post_to_wall, body)
-            await asyncio.to_thread(send_vk, body)
-        else:
-            logger.warning(f"[{msg_id}] VK_TOKEN не задан, пропуск")
-
-
-async def _run_all():
-    tasks = [asyncio.create_task(fetch_channel(ch, kws)) for ch, kws in CHANNEL_KEYWORDS.items()]
-    done, _ = await asyncio.wait(tasks, timeout=10)
-    for t in tasks:
-        if t not in done and not t.done():
-            t.cancel()
-
-
-last_cycle = 0.0
-
-
-def _watchdog():
-    global last_cycle
-    while True:
-        time.sleep(60)
-        now = time.time()
-        since = now - last_cycle
-        if since > 600:
-            logger.warning(f"Health OK: {since:.0f}s since last cycle, {sum(len(v) for v in seen_ids.values())} msgs tracked")
-        if since > 300:
-            logger.error(f"No cycles for {since:.0f}s, restarting")
-            os._exit(2)
-
-
+# --- HTTP health check ---
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/diag":
-            self._handle_diag()
-        else:
-            self.send_response(HTTPStatus.OK)
-            self.end_headers()
-            self.wfile.write(b"OK")
+        self.send_response(HTTPStatus.OK)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
     def do_HEAD(self):
         self.send_response(HTTPStatus.OK)
         self.end_headers()
 
-    def _handle_diag(self):
-        import httpx as _httpx
-        from bs4 import BeautifulSoup as _BS
-        lines = []
-        for ch in CHANNEL_KEYWORDS:
-            username = ch.lstrip("@")
-            url = f"https://t.me/s/{username}"
-            try:
-                resp = _httpx.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0"}, timeout=10)
-                html = resp.text
-                soup = _BS(html, "html.parser")
-                wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
-                lines.append(f"{ch}: HTTP {resp.status_code} len={len(html)} wraps={len(wraps)}")
-                if wraps:
-                    msg = wraps[-1].find("div", class_="tgme_widget_message")
-                    if msg:
-                        text_el = msg.find("div", class_="tgme_widget_message_text")
-                        lines.append(f"  last: post_id={msg.get('data-post')} text={text_el.get_text(strip=True)[:80] if text_el else 'NONE'}")
-                else:
-                    tgme = sorted(set(c for d in soup.find_all("div", class_=True) for c in d.get("class", []) if "tgme" in c))
-                    lines.append(f"  NO WRAPS! tgme={tgme}")
-                    lines.append(f"  HTML[:500]={html[:500]}")
-            except Exception as e:
-                lines.append(f"{ch}: ERROR {e}")
-        body = "\n".join(lines).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(body)
-
     def log_message(self, *a):
         pass
+
+
+def _start_http():
+    port = int(os.getenv("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    logger.info(f"HTTP server listening on 0.0.0.0:{port}")
+    server.serve_forever()
 
 
 def _self_ping():
@@ -287,51 +93,198 @@ def _self_ping():
     while True:
         time.sleep(14 * 60)
         try:
-            import httpx as _httpx
-            resp = _httpx.get(url, timeout=10)
+            import httpx
+            resp = httpx.get(url, timeout=10)
             logger.info(f"Self-ping: {resp.status_code}")
         except Exception as e:
             logger.warning(f"Self-ping error: {e}")
 
 
-def _start_http():
-    port = int(os.getenv("PORT", "8080"))
-    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-    logger.info(f"HTTP server listening on 0.0.0.0:{port}")
-    server.serve_forever()
+def _watchdog():
+    last = time.time()
+    while True:
+        time.sleep(60)
+        if time.time() - last > 300:
+            logger.error("No cycles for 300s, restarting")
+            os._exit(2)
 
 
+# --- Message processing ---
+def build_body(text: str) -> str:
+    return text
+
+
+def _check_length(channel: str, text: str) -> bool:
+    max_len = CHANNEL_MAX_LENGTH.get(channel)
+    if max_len and len(text) > max_len:
+        logger.info(f"[len] Пропущен ({len(text)} > {max_len} символов): {text[:80]}...")
+        return False
+    return True
+
+
+def _process_msg(channel: str, text: str, matched_kw: str):
+    if not _check_length(channel, text):
+        return
+    logger.info(f"[{channel}] Найдено «{matched_kw}»: {text[:80]}...")
+    body = build_body(text)
+    if VK_TOKEN:
+        post_to_wall(body)
+        send_vk(body)
+    else:
+        logger.warning("VK_TOKEN не задан, пропуск")
+
+
+# --- Event handler for new messages ---
+async def _on_new_msg(event):
+    if not _initial_done:
+        return
+
+    channel = f"@{event.chat.username}" if event.chat and event.chat.username else str(event.chat_id)
+    if channel not in CHANNEL_KEYWORDS:
+        return
+
+    keywords = CHANNEL_KEYWORDS[channel]
+    exclude = CHANNEL_EXCLUDE_KEYWORDS.get(channel, [])
+
+    post_id = f"{event.chat.username}/{event.id}"
+    msg_text = event.text or ""
+
+    with _seen_lock:
+        if post_id in seen_ids.get(channel, []):
+            return
+        seen_ids.setdefault(channel, []).append(post_id)
+        if len(seen_ids[channel]) > 10000:
+            seen_ids[channel] = seen_ids[channel][-5000:]
+
+    if not msg_text:
+        return
+
+    text_lower = msg_text.lower()
+    if any(ex in text_lower for ex in exclude):
+        return
+
+    if "*" in keywords:
+        matched_kw = "*"
+    else:
+        matched_kw = next((kw for kw in keywords if kw.lower() in text_lower), None)
+        if not matched_kw:
+            return
+
+    await asyncio.to_thread(_process_msg, channel, msg_text, matched_kw)
+
+
+# --- Main ---
 async def main():
-    global last_cycle
+    global _initial_done
+
+    api_id = int(os.environ["TG_API_ID"])
+    api_hash = os.environ["TG_API_HASH"]
+    phone = os.environ["TG_PHONE"]
+    session_str = os.getenv("TG_SESSION")
 
     _load_seen()
 
     for ch in CHANNEL_KEYWORDS:
-        if ch not in seen_ids:
-            seen_ids[ch] = []
+        seen_ids.setdefault(ch, [])
 
     threading.Thread(target=_watchdog, daemon=True).start()
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
 
-    channels_info = ", ".join(f"{ch}: {kws}" for ch, kws in CHANNEL_KEYWORDS.items())
-    logger.info(f"Каналы: {channels_info}, интервал {POLL_INTERVAL}с")
+    logger.info(f"Каналы: {', '.join(CHANNEL_KEYWORDS.keys())}")
 
-    await _run_all()
-    _save_seen()
-    last_cycle = time.time()
-    total = sum(len(v) for v in seen_ids.values())
-    logger.info(f"Загружено {total} сообщений, слежу за новыми...")
+    if session_str:
+        session = StringSession(session_str)
+        logger.info("Сессия из TG_SESSION")
+    else:
+        session = _session_name
+        logger.info("Сессия из файла")
+
+    client = TelegramClient(session, api_id, api_hash)
+
+    def _read_code():
+        logger.info(f"Ожидание кода в {_code_file} ...")
+        while True:
+            if os.path.exists(_code_file):
+                with open(_code_file, "r") as f:
+                    code = f.read().strip()
+                if code:
+                    os.remove(_code_file)
+                    logger.info(f"Код/пароль получен: {code[:2]}***")
+                    return code
+            time.sleep(2)
+
+    def _read_password():
+        logger.info(f"Ожидание облачного пароля в {_code_file} ...")
+        while True:
+            if os.path.exists(_code_file):
+                with open(_code_file, "r") as f:
+                    pw = f.read().strip()
+                if pw:
+                    os.remove(_code_file)
+                    logger.info(f"Пароль получен: {pw[:2]}***")
+                    return pw
+            time.sleep(2)
+
+    await client.start(phone=phone, code_callback=_read_code, password=_read_password)
+
+    me = await client.get_me()
+    logger.info(f"Telegram подключен: {me.first_name} (id={me.id})")
+
+    for ch, kws in CHANNEL_KEYWORDS.items():
+        client.add_event_handler(_on_new_msg, events.NewMessage(chats=ch))
+
+    await client.get_dialogs()
+
+    for ch in CHANNEL_KEYWORDS:
+        username = ch.lstrip("@")
+        try:
+            entity = await client.get_entity(username)
+            count = 0
+            async for msg in client.iter_messages(entity, limit=50):
+                post_id = f"{username}/{msg.id}"
+                with _seen_lock:
+                    seen_ids.setdefault(ch, [])
+                    if post_id not in seen_ids[ch]:
+                        seen_ids[ch].append(post_id)
+                        count += 1
+            logger.info(f"[init] {ch}: пометил {count} последних сообщений")
+        except errors.ChannelPrivateError:
+            logger.error(f"[init] {ch}: приватный канал, нет доступа")
+        except Exception as e:
+            logger.error(f"[init] {ch}: ошибка {e}")
+
+    _initial_done = True
+    logger.info("Бот запущен (Telethon), слежу за новыми сообщениями...")
 
     while True:
-        t0 = time.time()
-        await _run_all()
-        _save_seen()
-        last_cycle = time.time()
-        elapsed = last_cycle - t0
-        remaining = POLL_INTERVAL - elapsed
-        if remaining > 0:
-            await asyncio.sleep(remaining)
+        await asyncio.sleep(300)
+        for ch in CHANNEL_KEYWORDS:
+            username = ch.lstrip("@")
+            try:
+                entity = await client.get_entity(username)
+                async for msg in client.iter_messages(entity, limit=10):
+                    post_id = f"{username}/{msg.id}"
+                    with _seen_lock:
+                        if post_id not in seen_ids.get(ch, []):
+                            seen_ids.setdefault(ch, []).append(post_id)
+                            if msg.text:
+                                text_lower = msg.text.lower()
+                                exclude = CHANNEL_EXCLUDE_KEYWORDS.get(ch, [])
+                                if not any(ex in text_lower for ex in exclude):
+                                    keywords = CHANNEL_KEYWORDS[ch]
+                                    if "*" in keywords:
+                                        matched = "*"
+                                    else:
+                                        matched = next((kw for kw in keywords if kw.lower() in text_lower), None)
+                                    if matched:
+                                        logger.info(f"[fallback] {ch}: новое {post_id}")
+                                        await asyncio.to_thread(_process_msg, ch, msg.text, matched)
+            except Exception as e:
+                logger.warning(f"[fallback] {ch}: {e}")
+
+        with _seen_lock:
+            _save_seen()
 
 
 if __name__ == "__main__":
