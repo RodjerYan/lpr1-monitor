@@ -100,14 +100,6 @@ def _self_ping():
             logger.warning(f"Self-ping error: {e}")
 
 
-def _watchdog():
-    last = time.time()
-    while True:
-        time.sleep(60)
-        if time.time() - last > 300:
-            logger.error("No cycles for 300s, restarting")
-            os._exit(2)
-
 
 # --- Message processing ---
 def build_body(text: str) -> str:
@@ -187,7 +179,6 @@ async def main():
     for ch in CHANNEL_KEYWORDS:
         seen_ids.setdefault(ch, [])
 
-    threading.Thread(target=_watchdog, daemon=True).start()
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
 
