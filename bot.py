@@ -11,6 +11,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telethon import TelegramClient, events, errors
 from telethon.sessions import StringSession
+import httpx
 
 from config import (
     CHANNEL_KEYWORDS,
@@ -93,7 +94,6 @@ def _self_ping():
     while True:
         time.sleep(14 * 60)
         try:
-            import httpx
             resp = httpx.get(url, timeout=10)
             logger.info(f"Self-ping: {resp.status_code}")
         except Exception as e:
@@ -163,6 +163,8 @@ async def _on_new_msg(event):
             return
 
     await asyncio.to_thread(_process_msg, channel, msg_text, matched_kw)
+    with _seen_lock:
+        _save_seen()
 
 
 # --- Main ---
