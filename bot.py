@@ -114,7 +114,17 @@ def _save_alert(alert: dict):
 
 
 def _send_push(title: str, body: str):
-    pass
+    subs = _load_subscriptions()
+    if not subs:
+        return
+    from webpush import send_web_push
+    for sub in subs:
+        try:
+            ok = send_web_push(sub, title, body)
+            if not ok:
+                logger.warning(f"Push failed for {sub.get('endpoint','')[:40]}")
+        except Exception as e:
+            logger.warning(f"Push error: {e}")
 
 
 # --- HTTP health check + PWA ---
