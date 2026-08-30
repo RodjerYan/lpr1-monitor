@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import struct
@@ -81,25 +82,14 @@ def send_web_push(subscription: dict, title: str, body: str) -> bool:
         return False
 
     try:
-        sub_pub_bytes = _b64url_decode(p256dh)
-        sub_pub = ec.EllipticCurvePublicKey.from_encoded_point(
-            ec.SECP256R1(), sub_pub_bytes
-        )
+        ua_key = _b64url_decode(p256dh)
         auth_secret = _b64url_decode(auth_b64)
-
-        ephemeral = ec.generate_private_key(ec.SECP256R1())
-        ephemeral_pub_bytes = ephemeral.public_key().public_bytes(
-            serialization.Encoding.X962,
-            serialization.PublicFormat.UncompressedPoint,
-        )
-
-        # ECDH shared secret
-        ikm = ephemeral.exchange(ec.ECDH(), sub_pub)
 
         salt = os.urandom(16)
 
         # RFC 8291 Section 3.3 key derivation
-        prk = _hkdf(auth_secret, ikm, b"WebPush: info\x00" + sub_pub_bytes, 32)
+        ikm = hmac.new(auth_secret, ua_key, hashlib.sha256).digest()
+        prk = _hkdf(salt, ikm, b"WebPush: info\x00" + ua_key, 32)
         key = _hkdf(salt, prk, b"Content-Encoding: aes128gcm\x00", 32)
         nonce = _hkdf(salt, prk, b"Content-Encoding: nonce\x00", 12)
 
@@ -129,12 +119,13 @@ def send_web_push(subscription: dict, title: str, body: str) -> bool:
             logger.info(f"Push OK: {endpoint[:50]}")
             return True
         elif resp.status_code == 410:
-            logger.info(f"Push subscription expired: {endpoint[:50]}")
+            logger.info(f"Push expired: {endpoint[:50]}")
             return False
         else:
             logger.warning(f"Push {resp.status_code}: {resp.text[:200]}")
             return False
 
     except Exception as e:
-        logger.warning(f"Push error: {type(e).__name__}: {e}")
+        import traceback
+        logger.warning(f"Push error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return False
