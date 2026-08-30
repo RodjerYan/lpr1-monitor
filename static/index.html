@@ -149,6 +149,22 @@
       if ("serviceWorker" in navigator && "PushManager" in window) {
         const reg = await registerSW();
         console.log("SW registered", reg);
+
+        // Re-register subscription with server on every load
+        // (server loses push_subscribers.json on redeploy)
+        const existingSub = await reg.pushManager.getSubscription();
+        if (existingSub) {
+          try {
+            await fetch(`${API_BASE}/subscribe`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(existingSub),
+            });
+          } catch (e) {
+            console.error("Re-subscribe failed:", e);
+          }
+        }
+
         await checkSubscription(reg);
 
         document.getElementById("btn-subscribe").addEventListener("click", async () => {
