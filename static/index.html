@@ -131,6 +131,8 @@
         const list = document.getElementById("alerts-list");
         if (data.alerts && data.alerts.length > 0) {
           list.innerHTML = data.alerts
+            .slice()
+            .reverse()
             .map(
               (a) =>
                 `<div class="alert-item"><span class="alert-channel">${a.channel}</span><span class="alert-text">${a.text}</span><span class="alert-time">${a.time}</span></div>`

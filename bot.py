@@ -145,7 +145,9 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self._handle_status()
         elif self.path == "/alerts":
             self._handle_alerts()
-        elif self.path == "/" or self.path == "/index.html":
+        elif self.path == "/test-push":
+            self._handle_test_push()
+        elif self.path == "/" or self.path == "":
             self._serve_file("index.html", "text/html")
         elif self.path.startswith("/static/"):
             fname = self.path.split("/static/", 1)[1]
@@ -208,6 +210,19 @@ class _HealthHandler(BaseHTTPRequestHandler):
     def _handle_alerts(self):
         alerts = _load_alerts()
         body = json.dumps({"alerts": alerts[-20:]}, ensure_ascii=False)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+
+    def _handle_test_push(self):
+        subs = _load_subscriptions()
+        results = []
+        for sub in subs:
+            from webpush import send_web_push
+            ok = send_web_push(sub, "🚨 Тест LPR1", "Push уведомления работают!")
+            results.append({"endpoint": sub.get("endpoint", "")[:50], "sent": ok})
+        body = json.dumps({"subscribers": len(subs), "results": results})
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
