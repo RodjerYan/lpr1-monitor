@@ -116,15 +116,19 @@ def _save_alert(alert: dict):
 def _send_push(title: str, body: str):
     subs = _load_subscriptions()
     if not subs:
+        logger.info("No push subscribers, skipping")
         return
-    from webpush import send_web_push
-    for sub in subs:
-        try:
-            ok = send_web_push(sub, title, body)
-            if not ok:
-                logger.warning(f"Push failed for {sub.get('endpoint','')[:40]}")
-        except Exception as e:
-            logger.warning(f"Push error: {e}")
+    import threading
+    def _do():
+        from webpush import send_web_push
+        for sub in subs:
+            try:
+                ok = send_web_push(sub, title, body)
+                if not ok:
+                    logger.warning(f"Push failed for {sub.get('endpoint','')[:40]}")
+            except Exception as e:
+                logger.warning(f"Push error: {e}")
+    threading.Thread(target=_do, daemon=True).start()
 
 
 # --- HTTP health check + PWA ---
@@ -217,12 +221,14 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
     def _handle_test_push(self):
         subs = _load_subscriptions()
-        results = []
-        for sub in subs:
+        import threading
+        def _do_push():
             from webpush import send_web_push
-            ok = send_web_push(sub, "🚨 Тест LPR1", "Push уведомления работают!")
-            results.append({"endpoint": sub.get("endpoint", "")[:50], "sent": ok})
-        body = json.dumps({"subscribers": len(subs), "results": results})
+            for sub in subs:
+                ok = send_web_push(sub, "🚨 Тест LPR1", "Push уведомления работают!")
+                logger.info(f"Test push: {'OK' if ok else 'FAIL'} -> {sub.get('endpoint','')[:50]}")
+        threading.Thread(target=_do_push, daemon=True).start()
+        body = json.dumps({"subscribers": len(subs), "sent": len(subs)})
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
