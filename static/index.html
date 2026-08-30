@@ -146,11 +146,22 @@
 
       if ("serviceWorker" in navigator && "PushManager" in window) {
         const reg = await registerSW();
+        console.log("SW registered", reg);
         await checkSubscription(reg);
 
         document.getElementById("btn-subscribe").addEventListener("click", async () => {
-          await subscribe(reg);
-          await checkSubscription(reg);
+          try {
+            const btn = document.getElementById("btn-subscribe");
+            btn.textContent = "Подключение...";
+            btn.disabled = true;
+            await subscribe(reg);
+            await checkSubscription(reg);
+          } catch (e) {
+            console.error("Subscribe error:", e);
+            document.getElementById("subscribe-section").innerHTML =
+              '<p class="warning">Ошибка: ' + e.message + '</p>';
+            document.getElementById("subscribe-section").style.display = "block";
+          }
         });
 
         document.getElementById("btn-unsubscribe").addEventListener("click", async () => {
