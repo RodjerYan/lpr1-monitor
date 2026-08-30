@@ -418,10 +418,17 @@ async def main():
     client = TelegramClient(session, api_id, api_hash)
 
     if session_str:
-        await client.connect()
+        logger.info("Подключаюсь к Telegram...")
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30)
+        except asyncio.TimeoutError:
+            logger.error("connect() таймаут 30с!")
+            return
+        logger.info("connect() OK")
         if not await client.is_user_authorized():
             logger.error("TG_SESSION provided but not authorized!")
             return
+        logger.info("authorized OK")
         me = await client.get_me()
         logger.info(f"Telegram подключен: {me.first_name} (id={me.id})")
     else:
