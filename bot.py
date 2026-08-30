@@ -456,15 +456,19 @@ async def main():
     for ch, kws in CHANNEL_KEYWORDS.items():
         client.add_event_handler(_on_new_msg, events.NewMessage(chats=ch))
 
+    logger.info("Начинаю инициализацию...")
     try:
         await asyncio.wait_for(client.get_dialogs(), timeout=30)
+        logger.info("get_dialogs OK")
     except Exception as e:
         logger.warning(f"get_dialogs timeout/error: {e}")
 
     for ch in CHANNEL_KEYWORDS:
         username = ch.lstrip("@")
         try:
-            entity = await client.get_entity(username)
+            logger.info(f"[init] {ch}: get_entity...")
+            entity = await asyncio.wait_for(client.get_entity(username), timeout=15)
+            logger.info(f"[init] {ch}: entity OK, читаю сообщения...")
             count = 0
             async for msg in client.iter_messages(entity, limit=50):
                 post_id = f"{username}/{msg.id}"
@@ -476,8 +480,10 @@ async def main():
             logger.info(f"[init] {ch}: пометил {count} последних сообщений")
         except errors.ChannelPrivateError:
             logger.error(f"[init] {ch}: приватный канал, нет доступа")
+        except asyncio.TimeoutError:
+            logger.error(f"[init] {ch}: таймаут при инициализации")
         except Exception as e:
-            logger.error(f"[init] {ch}: ошибка {e}")
+            logger.error(f"[init] {ch}: ошибка {type(e).__name__}: {e}")
 
     _initial_done = True
     logger.info("Бот запущен (Telethon), слежу за новыми сообщениями...")
