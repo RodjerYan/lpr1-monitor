@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#ff3b30">
+  <title>LPR1 Monitor</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-icon">🚨</div>
+      <h1>LPR1 Monitor</h1>
+      <p class="subtitle">Мониторинг опасностей</p>
+    </header>
+
+    <div id="status-card" class="card status-card">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Проверка...</span>
+    </div>
+
+    <div id="subscribe-section" class="card" style="display:none">
+      <p>Включить уведомления об опасностях?</p>
+      <button id="btn-subscribe" class="btn btn-primary">Включить уведомления</button>
+    </div>
+
+    <div id="subscribed-section" class="card" style="display:none">
+      <div class="status-active">✅ Уведомления включены</div>
+      <button id="btn-unsubscribe" class="btn btn-secondary">Отключить</button>
+    </div>
+
+    <div class="card">
+      <h3>Каналы мониторинга</h3>
+      <ul class="channel-list">
+        <li><span class="ch">@lpr1_treugolnik</span></li>
+        <li><span class="ch">@mchs_belgorod</span></li>
+        <li><span class="ch">@BelgorodDRONE</span></li>
+        <li><span class="ch">@LiveOnlain</span></li>
+        <li><span class="ch">@belgorodecRU</span></li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>Последние уведомления</h3>
+      <div id="alerts-list" class="alerts-list">
+        <p class="empty">Нет уведомлений</p>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <p>LPR1 Monitor v1.0</p>
+    </footer>
+  </div>
+
+  <script>
+    const VAPID_PUBLIC_KEY = "__VAPID_PUBLIC_KEY__";
+    const API_BASE = "";
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; i++) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    async function registerSW() {
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.register("/static/sw.js");
+        return reg;
+      }
+      return null;
+    }
+
+    async function subscribe(reg) {
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      await fetch(`${API_BASE}/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sub),
+      });
+      return sub;
+    }
+
+    async function unsubscribe(reg) {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await sub.unsubscribe();
+        await fetch(`${API_BASE}/unsubscribe`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sub),
+        });
+      }
+    }
+
+    async function checkStatus() {
+      try {
+        const resp = await fetch(`${API_BASE}/status`);
+        const data = await resp.json();
+        document.getElementById("status-dot").className = "status-dot online";
+        document.getElementById("status-text").textContent = `Онлайн · ${data.seen_ids} сообщений`;
+      } catch {
+        document.getElementById("status-dot").className = "status-dot offline";
+        document.getElementById("status-text").textContent = "Офлайн";
+      }
+    }
+
+    async function checkSubscription(reg) {
+      const sub = await reg.pushManager.getSubscription();
+      document.getElementById("subscribe-section").style.display = sub ? "none" : "block";
+      document.getElementById("subscribed-section").style.display = sub ? "block" : "none";
+    }
+
+    async function loadAlerts() {
+      try {
+        const resp = await fetch(`${API_BASE}/alerts`);
+        const data = await resp.json();
+        const list = document.getElementById("alerts-list");
+        if (data.alerts && data.alerts.length > 0) {
+          list.innerHTML = data.alerts
+            .map(
+              (a) =>
+                `<div class="alert-item"><span class="alert-channel">${a.channel}</span><span class="alert-text">${a.text}</span><span class="alert-time">${a.time}</span></div>`
+            )
+            .join("");
+        }
+      } catch {}
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      checkStatus();
+      loadAlerts();
+
+      if ("serviceWorker" in navigator && "PushManager" in window) {
+        const reg = await registerSW();
+        await checkSubscription(reg);
+
+        document.getElementById("btn-subscribe").addEventListener("click", async () => {
+          await subscribe(reg);
+          await checkSubscription(reg);
+        });
+
+        document.getElementById("btn-unsubscribe").addEventListener("click", async () => {
+          await unsubscribe(reg);
+          await checkSubscription(reg);
+        });
+      } else {
+        document.getElementById("subscribe-section").innerHTML =
+          '<p class="warning">Push-уведомления не поддерживаются в этом браузере</p>';
+        document.getElementById("subscribe-section").style.display = "block";
+      }
+
+      setInterval(checkStatus, 30000);
+    });
+  </script>
+</body>
+</html>

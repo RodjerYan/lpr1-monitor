@@ -18,6 +18,8 @@ from config import (
     CHANNEL_EXCLUDE_KEYWORDS,
     CHANNEL_MAX_LENGTH,
     VK_TOKEN,
+    PUSH_VAPID_PUBLIC,
+    PUSH_VAPID_PRIVATE,
 )
 from vk_client import send_vk, post_to_wall
 
@@ -67,34 +69,195 @@ def _save_seen():
         logger.warning(f"Ошибка сохранения seen_ids.json: {e}")
 
 
-# --- HTTP health check ---
+# --- Push subscriptions ---
+_subscriptions_file = os.path.join(_dir, "push_subscriptions.json")
+_alerts_file = os.path.join(_dir, "push_alerts.json")
+
+
+def _load_subscriptions() -> list[dict]:
+    if os.path.exists(_subscriptions_file):
+        try:
+            with open(_subscriptions_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def _save_subs(subs: list[dict]):
+    try:
+        with open(_subscriptions_file, "w", encoding="utf-8") as f:
+            json.dump(subs, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"Ошибка сохранения подписок: {e}")
+
+
+def _load_alerts() -> list[dict]:
+    if os.path.exists(_alerts_file):
+        try:
+            with open(_alerts_file, "r", encoding="utf-8") as f:
+                return json.load(f)[-50:]
+        except Exception:
+            pass
+    return []
+
+
+def _save_alert(alert: dict):
+    alerts = _load_alerts()
+    alerts.append(alert)
+    alerts = alerts[-50:]
+    try:
+        with open(_alerts_file, "w", encoding="utf-8") as f:
+            json.dump(alerts, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _send_push(title: str, body: str):
+    subs = _load_subscriptions()
+    if not subs:
+        return
+    try:
+        from pywebpush import webpush
+    except ImportError:
+        logger.warning("pywebpush не установлен, push-уведомления отключены")
+        return
+    dead = []
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=json.dumps({"title": title, "body": body}),
+                vapid_private_key=PUSH_VAPID_PRIVATE,
+                vapid_claims={"sub": "mailto:bot@lpr1-monitor"},
+            )
+        except Exception as e:
+            logger.warning(f"Push failed: {e}")
+            dead.append(sub)
+    if dead:
+        subs = [s for s in subs if s not in dead]
+        _save_subs(subs)
+
+
+# --- HTTP health check + PWA ---
+_MIME = {
+    ".html": "text/html",
+    ".css": "text/css",
+    ".js": "application/javascript",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+}
+_STATIC_DIR = os.path.join(_dir, "static")
+
+
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/status":
             self._handle_status()
+        elif self.path == "/alerts":
+            self._handle_alerts()
+        elif self.path == "/" or self.path == "/index.html":
+            self._serve_file("index.html", "text/html")
+        elif self.path.startswith("/static/"):
+            fname = self.path.split("/static/", 1)[1]
+            ext = os.path.splitext(fname)[1]
+            mime = _MIME.get(ext, "application/octet-stream")
+            self._serve_file(fname, mime)
         else:
-            self.send_response(HTTPStatus.OK)
+            self.send_response(HTTPStatus.NOT_FOUND)
             self.end_headers()
-            self.wfile.write(b"OK")
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        if self.path == "/subscribe":
+            self._handle_subscribe(body)
+        elif self.path == "/unsubscribe":
+            self._handle_unsubscribe(body)
+        else:
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.end_headers()
 
     def do_HEAD(self):
         self.send_response(HTTPStatus.OK)
         self.end_headers()
 
+    def _serve_file(self, fname: str, mime: str):
+        fpath = os.path.join(_STATIC_DIR, fname)
+        if not os.path.exists(fpath):
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.end_headers()
+            return
+        with open(fpath, "rb") as f:
+            data = f.read()
+        if fname == "index.html" and PUSH_VAPID_PUBLIC:
+            data = data.replace(b"__VAPID_PUBLIC_KEY__", PUSH_VAPID_PUBLIC.encode())
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _handle_status(self):
         queue = _load_queue()
         total_seen = sum(len(v) for v in seen_ids.values())
+        subs = _load_subscriptions()
         body = json.dumps({
             "status": "ok",
             "initial_done": _initial_done,
             "channels": list(CHANNEL_KEYWORDS.keys()),
             "seen_ids": total_seen,
             "queue_size": len(queue),
+            "push_subscribers": len(subs),
         }, ensure_ascii=False, indent=2)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
+
+    def _handle_alerts(self):
+        alerts = _load_alerts()
+        body = json.dumps({"alerts": alerts[-20:]}, ensure_ascii=False)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+
+    def _handle_subscribe(self, raw: bytes):
+        try:
+            sub = json.loads(raw)
+            subs = _load_subscriptions()
+            endpoint = sub.get("endpoint", "")
+            subs = [s for s in subs if s.get("endpoint") != endpoint]
+            subs.append(sub)
+            _save_subs(subs)
+            logger.info(f"Push подписка: {endpoint[:60]}...")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        except Exception as e:
+            self.send_response(HTTPStatus.BAD_REQUEST)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def _handle_unsubscribe(self, raw: bytes):
+        try:
+            sub = json.loads(raw)
+            subs = _load_subscriptions()
+            endpoint = sub.get("endpoint", "")
+            subs = [s for s in subs if s.get("endpoint") != endpoint]
+            _save_subs(subs)
+            logger.info(f"Push отписка: {endpoint[:60]}...")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        except Exception:
+            self.send_response(HTTPStatus.BAD_REQUEST)
+            self.end_headers()
 
     def log_message(self, *a):
         pass
@@ -177,6 +340,18 @@ def _process_msg(channel: str, text: str, matched_kw: str):
         return
     logger.info(f"[{channel}] Найдено «{matched_kw}»: {text[:80]}...")
     body = build_body(text)
+
+    # Save alert
+    _save_alert({
+        "channel": channel,
+        "text": body[:200],
+        "keyword": matched_kw,
+        "time": time.strftime("%H:%M:%S"),
+    })
+
+    # Send push notification
+    _send_push(f"🚨 {channel}", body[:200])
+
     if VK_TOKEN:
         ok_wall = post_to_wall(body)
         ok_msg = send_vk(body)

@@ -28,3 +28,7 @@ CHANNEL_MAX_LENGTH: dict[str, int] = {
     ch: int(v)
     for ch, v in json.loads(raw_ml).items()
 }
+
+# Web Push VAPID keys
+PUSH_VAPID_PUBLIC = os.getenv("PUSH_VAPID_PUBLIC", "")
+PUSH_VAPID_PRIVATE = os.getenv("PUSH_VAPID_PRIVATE", "")
