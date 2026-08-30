@@ -417,34 +417,41 @@ async def main():
 
     client = TelegramClient(session, api_id, api_hash)
 
-    def _read_code():
-        logger.info(f"Ожидание кода в {_code_file} ...")
-        while True:
-            if os.path.exists(_code_file):
-                with open(_code_file, "r") as f:
-                    code = f.read().strip()
-                if code:
-                    os.remove(_code_file)
-                    logger.info(f"Код/пароль получен: {code[:2]}***")
-                    return code
-            time.sleep(2)
+    if session_str:
+        await client.connect()
+        if not await client.is_user_authorized():
+            logger.error("TG_SESSION provided but not authorized!")
+            return
+        me = await client.get_me()
+        logger.info(f"Telegram подключен: {me.first_name} (id={me.id})")
+    else:
+        def _read_code():
+            logger.info(f"Ожидание кода в {_code_file} ...")
+            while True:
+                if os.path.exists(_code_file):
+                    with open(_code_file, "r") as f:
+                        code = f.read().strip()
+                    if code:
+                        os.remove(_code_file)
+                        logger.info(f"Код/пароль получен: {code[:2]}***")
+                        return code
+                time.sleep(2)
 
-    def _read_password():
-        logger.info(f"Ожидание облачного пароля в {_code_file} ...")
-        while True:
-            if os.path.exists(_code_file):
-                with open(_code_file, "r") as f:
-                    pw = f.read().strip()
-                if pw:
-                    os.remove(_code_file)
-                    logger.info(f"Пароль получен: {pw[:2]}***")
-                    return pw
-            time.sleep(2)
+        def _read_password():
+            logger.info(f"Ожидание облачного пароля в {_code_file} ...")
+            while True:
+                if os.path.exists(_code_file):
+                    with open(_code_file, "r") as f:
+                        pw = f.read().strip()
+                    if pw:
+                        os.remove(_code_file)
+                        logger.info(f"Пароль получен: {pw[:2]}***")
+                        return pw
+                time.sleep(2)
 
-    await client.start(phone=phone, code_callback=_read_code, password=_read_password)
-
-    me = await client.get_me()
-    logger.info(f"Telegram подключен: {me.first_name} (id={me.id})")
+        await client.start(phone=phone, code_callback=_read_code, password=_read_password)
+        me = await client.get_me()
+        logger.info(f"Telegram подключен: {me.first_name} (id={me.id})")
 
     for ch, kws in CHANNEL_KEYWORDS.items():
         client.add_event_handler(_on_new_msg, events.NewMessage(chats=ch))
