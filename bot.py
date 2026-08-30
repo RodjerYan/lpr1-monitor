@@ -113,24 +113,101 @@ def _save_alert(alert: dict):
         pass
 
 
+def _send_webpush(sub: dict, payload: str):
+    import base64
+    import hashlib
+    import time
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.backends import default_backend
+    import httpx
+
+    endpoint = sub["endpoint"]
+    p256dh = sub["keys"]["p256dh"]
+    auth = sub["keys"]["auth"]
+
+    # Decode VAPID private key
+    priv_der = base64.urlsafe_b64decode(PUSH_VAPID_PRIVATE + "==")
+    priv_key = serialization.load_der_private_key(priv_der, password=None, backend=default_backend())
+    pub_key = priv_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.CompressedPoint,
+    )
+
+    # Build VAPID JWT
+    now = int(time.time())
+    header = base64.urlsafe_b64encode(json.dumps({"typ": "JWT", "alg": "ES256"}).encode()).rstrip(b"=").decode()
+    claims = base64.urlsafe_b64encode(json.dumps({
+        "aud": endpoint.split("/subscribe")[0] if "/subscribe" in endpoint else "/".join(endpoint.split("/")[:3]),
+        "exp": now + 43200,
+        "sub": "mailto:bot@lpr1-monitor",
+    }).encode()).rstrip(b"=").decode()
+    signing_input = f"{header}.{claims}"
+    signature = priv_key.sign(signing_input.encode(), ec.ECDSA(hashes.SHA256()))
+    # Convert DER signature to r||s format
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+    r, s = decode_dss_signature(signature)
+    sig_bytes = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    token = f"{signing_input}.{base64.urlsafe_b64encode(sig_bytes).rstrip(b'=').decode()}"
+
+    # Encrypt payload
+    user_key = base64.urlsafe_b64decode(p256dh + "==")
+    user_auth = base64.urlsafe_b64decode(auth + "==")
+
+    # ECDH shared secret
+    user_pub = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), user_key)
+    shared_key = priv_key.exchange(ec.ECDH(), user_pub)
+
+    # Derive encryption keys (RFC 8291)
+    key_info = b"WebPush: info\x00" + user_key + b"\x04" + pub_key
+    ikm = hashlib.hkdf_sha256(shared_key, 32, b"", key_info)
+
+    salt = os.urandom(16)
+    key_info2 = b"Content-Encoding: aes128gcm\x00"
+    prk = hashlib.hkdf_sha256(salt, 32, b"", key_info2)
+    key_material = b""
+    block = b""
+    while len(key_material) < 64:
+        block = hashlib.hmac_sha256(prk, block + key_info2 + b"\x01").digest()
+        key_material += block
+    aes_key = key_material[:16]
+    nonce = key_material[16:28]
+
+    # AES-128-GCM encrypt
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    aesgcm = AESGCM(aes_key)
+    record = aesgcm.encrypt(nonce, payload.encode("utf-8"), None)
+    encrypted = record[:-16]  # Remove auth tag appended
+    tag = record[-16:]
+
+    # Build aes128gcm header
+    rs = (len(payload) + 1).to_bytes(4, "big")[:4]
+    id_len = 0
+    header_bytes = salt + rs + bytes([id_len])
+    body = header_bytes + encrypted + tag
+
+    # Send
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "Content-Encoding": "aes128gcm",
+        "TTL": "86400",
+        "Authorization": f"vapid t={token}, k={base64.urlsafe_b64encode(pub_key).rstrip(b'=').decode()}",
+    }
+    resp = httpx.post(endpoint, content=body, headers=headers, timeout=15)
+    if resp.status_code not in (200, 201):
+        raise Exception(f"Push failed: {resp.status_code} {resp.text[:100]}")
+
+
 def _send_push(title: str, body: str):
     subs = _load_subscriptions()
     if not subs:
         return
-    try:
-        from pywebpush import webpush
-    except ImportError:
-        logger.warning("pywebpush не установлен, push-уведомления отключены")
+    if not PUSH_VAPID_PRIVATE:
         return
     dead = []
     for sub in subs:
         try:
-            webpush(
-                subscription_info=sub,
-                data=json.dumps({"title": title, "body": body}),
-                vapid_private_key=PUSH_VAPID_PRIVATE,
-                vapid_claims={"sub": "mailto:bot@lpr1-monitor"},
-            )
+            _send_webpush(sub, json.dumps({"title": title, "body": body}))
         except Exception as e:
             logger.warning(f"Push failed: {e}")
             dead.append(sub)
