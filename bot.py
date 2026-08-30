@@ -27,6 +27,7 @@ _seen_file = os.path.join(_dir, "seen_ids.json")
 _seen_lock = threading.Lock()
 _session_name = os.path.join(_dir, "tg_monitor")
 _code_file = os.path.join(_dir, "tg_code.txt")
+_queue_file = os.path.join(_dir, "vk_queue.json")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,6 +49,9 @@ def _load_seen():
         try:
             with open(_seen_file, "r", encoding="utf-8") as f:
                 seen_ids = {ch: data for ch, data in json.load(f).items()}
+            for ch in seen_ids:
+                if len(seen_ids[ch]) > 5000:
+                    seen_ids[ch] = seen_ids[ch][-5000:]
             total = sum(len(v) for v in seen_ids.values())
             logger.info(f"Загружено {total} known IDs из seen_ids.json")
         except Exception as e:
@@ -66,13 +70,31 @@ def _save_seen():
 # --- HTTP health check ---
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(HTTPStatus.OK)
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path == "/status":
+            self._handle_status()
+        else:
+            self.send_response(HTTPStatus.OK)
+            self.end_headers()
+            self.wfile.write(b"OK")
 
     def do_HEAD(self):
         self.send_response(HTTPStatus.OK)
         self.end_headers()
+
+    def _handle_status(self):
+        queue = _load_queue()
+        total_seen = sum(len(v) for v in seen_ids.values())
+        body = json.dumps({
+            "status": "ok",
+            "initial_done": _initial_done,
+            "channels": list(CHANNEL_KEYWORDS.keys()),
+            "seen_ids": total_seen,
+            "queue_size": len(queue),
+        }, ensure_ascii=False, indent=2)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
 
     def log_message(self, *a):
         pass
@@ -106,6 +128,42 @@ def build_body(text: str) -> str:
     return text
 
 
+def _load_queue() -> list[dict]:
+    if os.path.exists(_queue_file):
+        try:
+            with open(_queue_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def _save_queue(queue: list[dict]):
+    try:
+        with open(_queue_file, "w", encoding="utf-8") as f:
+            json.dump(queue, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"Ошибка сохранения очереди: {e}")
+
+
+def _retry_queue():
+    while True:
+        time.sleep(60)
+        queue = _load_queue()
+        if not queue:
+            continue
+        remaining = []
+        for item in queue:
+            ok_wall = post_to_wall(item["text"])
+            ok_msg = send_vk(item["text"])
+            if ok_wall or ok_msg:
+                logger.info(f"[queue] Отправлено: {item['text'][:50]}...")
+            else:
+                remaining.append(item)
+                logger.warning(f"[queue] Осталось в очереди: {len(remaining)}")
+        _save_queue(remaining)
+
+
 def _check_length(channel: str, text: str) -> bool:
     max_len = CHANNEL_MAX_LENGTH.get(channel)
     if max_len and len(text) > max_len:
@@ -120,8 +178,15 @@ def _process_msg(channel: str, text: str, matched_kw: str):
     logger.info(f"[{channel}] Найдено «{matched_kw}»: {text[:80]}...")
     body = build_body(text)
     if VK_TOKEN:
-        post_to_wall(body)
-        send_vk(body)
+        ok_wall = post_to_wall(body)
+        ok_msg = send_vk(body)
+        if not ok_wall and not ok_msg:
+            queue = _load_queue()
+            queue.append({"text": body, "channel": channel, "ts": time.time()})
+            if len(queue) > 100:
+                queue = queue[-100:]
+            _save_queue(queue)
+            logger.warning(f"[{channel}] Сохранено в очередь ({len(queue)} всего)")
     else:
         logger.warning("VK_TOKEN не задан, пропуск")
 
@@ -149,10 +214,12 @@ async def _on_new_msg(event):
             seen_ids[channel] = seen_ids[channel][-5000:]
 
     if not msg_text:
+        logger.debug(f"[{channel}] {post_id}: пустое сообщение, пропуск")
         return
 
     text_lower = msg_text.lower()
     if any(ex in text_lower for ex in exclude):
+        logger.debug(f"[{channel}] {post_id}: исключено по exclude, пропуск")
         return
 
     if "*" in keywords:
@@ -160,6 +227,7 @@ async def _on_new_msg(event):
     else:
         matched_kw = next((kw for kw in keywords if kw.lower() in text_lower), None)
         if not matched_kw:
+            logger.debug(f"[{channel}] {post_id}: ключевые слова не совпали, пропуск")
             return
 
     await asyncio.to_thread(_process_msg, channel, msg_text, matched_kw)
@@ -183,6 +251,7 @@ async def main():
 
     threading.Thread(target=_start_http, daemon=True).start()
     threading.Thread(target=_self_ping, daemon=True).start()
+    threading.Thread(target=_retry_queue, daemon=True).start()
 
     logger.info(f"Каналы: {', '.join(CHANNEL_KEYWORDS.keys())}")
 

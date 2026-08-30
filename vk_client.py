@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 import time
 
@@ -11,6 +12,32 @@ VK_GROUP_ID = -239766241
 _members_cache = None
 _members_cache_ts = 0
 MEMBERS_CACHE_TTL = 300
+MAX_RETRIES = 3
+RETRY_DELAY = 2
+
+
+def _vk_request(method: str, params: dict, timeout: int = 15) -> dict | None:
+    url = f"https://api.vk.com/method/{method}"
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = httpx.get(url, params=params, timeout=timeout)
+            data = resp.json()
+            if "error" in data:
+                error = data["error"]
+                if error.get("error_code") in (6, 14):
+                    delay = RETRY_DELAY * (attempt + 1)
+                    logger.warning(f"VK {method}: error_code={error['error_code']}, retry {attempt+1}/{MAX_RETRIES} через {delay}с")
+                    time.sleep(delay)
+                    continue
+                logger.error(f"VK {method} API error: {error}")
+                return None
+            return data.get("response")
+        except Exception as e:
+            delay = RETRY_DELAY * (attempt + 1)
+            logger.warning(f"VK {method} exception: {e}, retry {attempt+1}/{MAX_RETRIES} через {delay}с")
+            time.sleep(delay)
+    logger.error(f"VK {method}: все {MAX_RETRIES} попыток исчерпаны")
+    return None
 
 
 def _get_members() -> list[str]:
@@ -22,29 +49,21 @@ def _get_members() -> list[str]:
 
     members = []
     offset = 0
-    url = "https://api.vk.com/method/groups.getMembers"
     while True:
-        params = {
+        response = _vk_request("groups.getMembers", {
             "access_token": VK_TOKEN,
             "group_id": 239766241,
             "offset": offset,
             "count": 1000,
             "v": "5.199",
-        }
-        try:
-            resp = httpx.get(url, params=params, timeout=10)
-            data = resp.json()
-            if "error" in data:
-                logger.error(f"VK getMembers API error: {data['error']}")
-                break
-            items = data.get("response", {}).get("items", [])
-            members.extend(str(i) for i in items)
-            if len(items) < 1000:
-                break
-            offset += 1000
-        except Exception as e:
-            logger.error(f"VK getMembers error: {e}")
+        })
+        if response is None:
             break
+        items = response.get("items", [])
+        members.extend(str(i) for i in items)
+        if len(items) < 1000:
+            break
+        offset += 1000
 
     cache = members if members else None
     _members_cache = cache
@@ -53,36 +72,23 @@ def _get_members() -> list[str]:
     return members
 
 
-
-
-
 def post_to_wall(text: str) -> bool:
     if not VK_TOKEN:
         return False
 
-    url = "https://api.vk.com/method/wall.post"
-    params = {
+    logger.info("VK wall.post: отправка...")
+    response = _vk_request("wall.post", {
         "access_token": VK_TOKEN,
         "owner_id": VK_GROUP_ID,
         "from_group": 1,
         "message": text,
         "close_comments": 1,
         "v": "5.199",
-    }
-
-    try:
-        logger.info(f"VK wall.post: отправка...")
-        resp = httpx.get(url, params=params, timeout=10)
-        data = resp.json()
-        if data.get("response"):
-            logger.info(f"VK: пост на стене OK (post_id={data['response'].get('post_id')})")
-            return True
-        else:
-            logger.error(f"VK wall.post ОШИБКА: {data}")
-            return False
-    except Exception as e:
-        logger.error(f"VK wall.post ИСКЛЮЧЕНИЕ: {e}")
-        return False
+    })
+    if response:
+        logger.info(f"VK: пост на стене OK (post_id={response.get('post_id')})")
+        return True
+    return False
 
 
 def send_vk(text: str) -> bool:
@@ -93,28 +99,19 @@ def send_vk(text: str) -> bool:
     if not members:
         return False
 
-    url = "https://api.vk.com/method/messages.send"
     ok = False
-
     for i in range(0, len(members), 100):
-        batch = members[i : i + 100]
-        params = {
+        batch = members[i:i + 100]
+        logger.info(f"VK messages.send: batch {i//100+1}, {len(batch)} recipients...")
+        response = _vk_request("messages.send", {
             "access_token": VK_TOKEN,
             "peer_ids": ",".join(batch),
             "message": text,
             "random_id": 0,
             "v": "5.199",
-        }
-        try:
-            logger.info(f"VK messages.send: batch {i//100+1}, {len(batch)} recipients...")
-            resp = httpx.get(url, params=params, timeout=15)
-            data = resp.json()
-            if data.get("response"):
-                logger.info(f"VK: ЛС отправлено {len(batch)} подписчикам OK")
-                ok = True
-            else:
-                logger.error(f"VK messages.send ОШИБКА batch {i//100+1}: {data}")
-        except Exception as e:
-            logger.error(f"VK messages.send ИСКЛЮЧЕНИЕ batch {i//100+1}: {e}")
+        })
+        if response:
+            logger.info(f"VK: ЛС отправлено {len(batch)} подписчикам OK")
+            ok = True
 
     return ok

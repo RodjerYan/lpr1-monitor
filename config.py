@@ -1,10 +1,9 @@
+from __future__ import annotations
 import json
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 
 # Пара "канал -> список ключевых слов"
 raw = os.getenv("CHANNEL_KEYWORDS", "{}")
@@ -13,20 +12,8 @@ CHANNEL_KEYWORDS: dict[str, list[str]] = {
     for ch, kws in json.loads(raw).items()
 }
 
-# Email
-YANDEX_EMAIL = os.getenv("YANDEX_EMAIL")
-YANDEX_EMAIL_PASSWORD = os.getenv("YANDEX_EMAIL_PASSWORD")
-NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL")
-
-# Telegram
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
 # VK
 VK_TOKEN = os.getenv("VK_TOKEN")
-
-# ntfy.sh
-NTFY_TOPIC = os.getenv("NTFY_TOPIC")
 
 # Exclude keywords per channel (messages containing these are skipped)
 raw_ex = os.getenv("CHANNEL_EXCLUDE_KEYWORDS", "{}")
@@ -41,6 +28,3 @@ CHANNEL_MAX_LENGTH: dict[str, int] = {
     ch: int(v)
     for ch, v in json.loads(raw_ml).items()
 }
-
-# Screenshot
-SCREENSHOT_ENABLED = os.getenv("SCREENSHOT_ENABLED", "").lower() in ("1", "true", "yes")
