@@ -463,25 +463,28 @@ async def main():
     except Exception as e:
         logger.warning(f"get_dialogs timeout/error: {e}")
 
-    for ch in CHANNEL_KEYWORDS:
+    async def _init_channel(ch):
         username = ch.lstrip("@")
+        logger.info(f"[init] {ch}: get_entity...")
+        entity = await client.get_entity(username)
+        logger.info(f"[init] {ch}: entity OK, читаю сообщения...")
+        count = 0
+        async for msg in client.iter_messages(entity, limit=50):
+            post_id = f"{username}/{msg.id}"
+            with _seen_lock:
+                seen_ids.setdefault(ch, [])
+                if post_id not in seen_ids[ch]:
+                    seen_ids[ch].append(post_id)
+                    count += 1
+        logger.info(f"[init] {ch}: пометил {count} последних сообщений")
+
+    for ch in CHANNEL_KEYWORDS:
         try:
-            logger.info(f"[init] {ch}: get_entity...")
-            entity = await asyncio.wait_for(client.get_entity(username), timeout=15)
-            logger.info(f"[init] {ch}: entity OK, читаю сообщения...")
-            count = 0
-            async for msg in client.iter_messages(entity, limit=50):
-                post_id = f"{username}/{msg.id}"
-                with _seen_lock:
-                    seen_ids.setdefault(ch, [])
-                    if post_id not in seen_ids[ch]:
-                        seen_ids[ch].append(post_id)
-                        count += 1
-            logger.info(f"[init] {ch}: пометил {count} последних сообщений")
+            await asyncio.wait_for(_init_channel(ch), timeout=30)
         except errors.ChannelPrivateError:
             logger.error(f"[init] {ch}: приватный канал, нет доступа")
         except asyncio.TimeoutError:
-            logger.error(f"[init] {ch}: таймаут при инициализации")
+            logger.error(f"[init] {ch}: таймаут 30с, пропускаю")
         except Exception as e:
             logger.error(f"[init] {ch}: ошибка {type(e).__name__}: {e}")
 
