@@ -449,7 +449,10 @@ async def main():
     for ch, kws in CHANNEL_KEYWORDS.items():
         client.add_event_handler(_on_new_msg, events.NewMessage(chats=ch))
 
-    await client.get_dialogs()
+    try:
+        await asyncio.wait_for(client.get_dialogs(), timeout=30)
+    except Exception as e:
+        logger.warning(f"get_dialogs timeout/error: {e}")
 
     for ch in CHANNEL_KEYWORDS:
         username = ch.lstrip("@")
